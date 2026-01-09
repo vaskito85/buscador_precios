@@ -1,6 +1,7 @@
 
 # app.py
 import streamlit as st
+import streamlit.components.v1 as components
 from typing import List, Dict
 from collections import defaultdict
 from utils.supabase_client import get_supabase
@@ -32,13 +33,6 @@ def parse_coord(txt: str):
 def get_user_id():
     sess = st.session_state.get("session")
     return getattr(getattr(sess, "user", None), "id", None)
-
-def confidence_color(count: int) -> str:
-    if count == 1:
-        return "red"
-    if 2 <= count <= 3:
-        return "yellow"
-    return "green"
 
 def confidence_label(count: int) -> str:
     if count == 1:
@@ -83,7 +77,6 @@ if page == "Login":
                 st.error("Email inválido.")
             else:
                 try:
-                    # Enviar OTP de 6 dígitos por email (sin magic link)
                     supabase.auth.sign_in_with_otp({"email": email})
                     st.info("✅ Código enviado. Revisá tu email y pegalo en el campo de la derecha.")
                 except Exception as e:
@@ -96,7 +89,7 @@ if page == "Login":
                 session = supabase.auth.verify_otp({
                     "email": email,
                     "token": otp,
-                    "type": "email"  # importante
+                    "type": "email"
                 })
                 st.session_state.session = session
                 st.session_state.user_email = email
@@ -115,17 +108,24 @@ elif page == "Cargar Precio":
         st.warning("Iniciá sesión primero en la sección Login.")
         st.stop()
 
-    # Ubicación (por ahora manual)
+    # Ubicación (por ahora manual + botón de geolocalización)
     st.subheader("Tu ubicación")
     col_lat, col_lon, col_rad = st.columns([1, 1, 1])
     lat_txt = col_lat.text_input("Latitud", placeholder="-38.7183")
     lon_txt = col_lon.text_input("Longitud", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio de búsqueda de locales (km)", 1, 15, 5)
 
+    # Botón "Usar mi ubicación" (incrustado via componente HTML)
+    try:
+        components.html(
+            open("components/geolocation.html", "r", encoding="utf-8").read(),
+            height=80
+        )
+    except Exception:
+        st.caption("Tip: podés agregar el botón 'Usar mi ubicación' creando components/geolocation.html")
+
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
-    if lat is None or lon is None:
-        st.info("Ingresá latitud y longitud válidas para sugerir locales cercanos.")
     nearby_options: List[Dict] = []
     store_choice = None
 
@@ -162,7 +162,6 @@ elif page == "Cargar Precio":
                             "address": new_store_address,
                             "lat": float(lat),
                             "lon": float(lon)
-                            # geom es columna generada en BD
                         }).execute()
                         store_choice = store_ins.data[0]["id"]
                         st.success("Local creado.")
@@ -175,7 +174,6 @@ elif page == "Cargar Precio":
     currency = st.selectbox("Moneda", ["ARS", "USD", "EUR"])
 
     if st.button("Registrar precio"):
-        # Validaciones
         if not product_name:
             st.error("Ingresá el nombre del producto.")
             st.stop()
@@ -186,7 +184,6 @@ elif page == "Cargar Precio":
             st.error("Ingresá latitud y longitud válidas.")
             st.stop()
 
-        # Asegurar user_id
         user_id = get_user_id()
         if not user_id:
             st.error("Tu sesión expiró. Iniciá sesión nuevamente.")
@@ -216,7 +213,6 @@ elif page == "Cargar Precio":
                 "price": float(price),
                 "lat": float(lat),
                 "lon": float(lon)
-                # geom se genera en la BD
             }).execute()
             st.success("✅ Precio registrado. ¡Gracias por tu aporte!")
         except Exception as e:
@@ -229,6 +225,15 @@ elif page == "Lista de Precios":
     lat_txt = col_lat.text_input("Latitud", placeholder="-38.7183")
     lon_txt = col_lon.text_input("Longitud", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio (km)", 1, 15, 5)
+
+    # Botón "Usar mi ubicación" aquí también
+    try:
+        components.html(
+            open("components/geolocation.html", "r", encoding="utf-8").read(),
+            height=80
+        )
+    except Exception:
+        st.caption("Tip: agregá components/geolocation.html para usar el GPS del navegador.")
 
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
@@ -261,7 +266,7 @@ elif page == "Lista de Precios":
         st.info("Aún no hay precios cargados en estos locales.")
         st.stop()
 
-    # 3) Mapear productos (nombre/moneda) y locales (nombre/meters)
+    # 3) Mapear productos y locales
     product_ids = list({s['product_id'] for s in sightings})
     products = supabase.table("products").select("id, name, currency").in_("id", product_ids).execute().data
     prod_map = {p['id']: {"name": p['name'], "currency": p['currency']} for p in products}
@@ -312,7 +317,7 @@ elif page == "Alertas":
 
     if st.button("Activar alerta"):
         try:
-            # Buscar o crear producto (por nombre; moneda por defecto ARS)
+            # Buscar o crear producto
             prod_q = supabase.table("products").select("id, currency").eq("name", product_name.strip()).limit(1).execute().data
             if not prod_q:
                 prod_ins = supabase.table("products").insert({"name": product_name.strip(), "currency": "ARS"}).execute()
@@ -328,7 +333,7 @@ elif page == "Alertas":
                 "active": True
             }).execute()
 
-            st.success("✅ Alerta creada. Te avisaremos en esta página cuando haya precios **validados** más baratos cerca.")
+            st.success("✅ Alerta creada. Te avisaremos cuando haya precios **validados** más baratos cerca.")
         except Exception as e:
             st.error(f"No pudimos crear la alerta: {e}")
 
