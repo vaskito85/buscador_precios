@@ -51,13 +51,12 @@ def normalize_product(name: str) -> str:
     s = " ".join(s.split())
 
     # normalizar unidades pegadas a números: "1l", "500ml", "1kg", "250gr"
-    # deja "numero unidad" con espacio: "1 l", "500 ml", "1 kg", "250 g"
     s = re.sub(r"(\d+)\s*(lt|l|kg|gr|g|ml)\b", lambda m: f"{m.group(1)} {UNITS_MAP[m.group(2)]}", s)
 
-    # si quedó "numero  l" con doble espacio por alguna razón, colapsar
+    # colapsar por si quedaron dobles espacios
     s = " ".join(s.split())
 
-    # normalizar unidades sueltas (por si vinieran separadas incorrectamente)
+    # normalizar tokens sueltos de unidades
     tokens = s.split()
     norm_tokens = []
     for t in tokens:
@@ -67,7 +66,7 @@ def normalize_product(name: str) -> str:
             norm_tokens.append(t)
     s = " ".join(norm_tokens)
 
-    # remover puntuación innecesaria común (mantener '-' si fuera parte del nombre)
+    # remover puntuación común
     s = re.sub(r"[.,;:]+", "", s)
 
     return s
@@ -77,7 +76,6 @@ def prettify_product(name: str) -> str:
     Mejora la presentación del nombre normalizado para UI:
     - Capitaliza la primera letra de palabras comunes
     - Mantiene unidades en minúscula
-    - No pone todo Title Case para evitar 'Ml' o 'Kg'
     """
     if not name:
         return ""
@@ -89,7 +87,6 @@ def prettify_product(name: str) -> str:
         elif t in COMMON_WORDS_CAP:
             pretty.append(t.capitalize())
         else:
-            # Capitaliza la primera letra de palabras que no son unidades
             pretty.append(t[0].upper() + t[1:] if len(t) > 1 else t.upper())
     return " ".join(pretty)
 
@@ -262,7 +259,7 @@ elif page == "Cargar Precio":
         # Normalizar nombre antes de guardar/buscar
         product_name = normalize_product(product_name_input)
 
-        # Crear producto (optimista) o buscar por UNIQUE(name, currency) usando el nombre normalizado
+        # Crear producto (optimista) o buscar por UNIQUE(name, currency)
         try:
             product_res = supabase.table("products").insert({
                 "name": product_name,
@@ -306,6 +303,16 @@ elif page == "Lista de Precios":
     lat_txt = col_lat.text_input("Latitud", placeholder="-38.7183")
     lon_txt = col_lon.text_input("Longitud", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio (km)", 1, 15, 5)
+
+    # Controles UX nuevos: filtro, orden y límite
+    st.subheader("Filtros y orden")
+    filter_text = st.text_input("Filtrar producto", placeholder="Ej.: leche, yerba, arroz")
+    order_by = st.radio(
+        "Ordenar por",
+        ["Fecha (reciente)", "Precio ascendente", "Precio descendente"],
+        horizontal=True
+    )
+    max_cards = st.number_input("Máximo de tarjetas a mostrar", min_value=10, max_value=200, value=50, step=10)
 
     # Botón "Usar mi ubicación"
     try:
@@ -358,27 +365,69 @@ elif page == "Lista de Precios":
     for s in sightings:
         grouped[(s['product_id'], s['store_id'])].append(s)
 
-    # 5) Render (mostrar nombre "prettify")
+    # 5) Preparar lista de entradas con agregados (latest, count, etc.)
+    entries = []
     for (pid, sid), items in grouped.items():
         items_sorted = sorted(items, key=lambda x: x['created_at'], reverse=True)
         latest = items_sorted[0]
         count = len(items)
         label = confidence_label(count)
         css_class = confidence_class(count)
+
         prod = prod_map.get(pid, {"name": f"producto {pid}", "currency": "ARS"})
         store = store_map.get(sid, {"name": f"Local {sid}", "meters": None})
 
-        metres_str = f"{int(store['meters'])} m" if store.get("meters") is not None else ""
         display_name = prettify_product(prod['name'])
+        meters_str = f"{int(store['meters'])} m" if store.get("meters") is not None else ""
 
-        st.markdown(f"""
-        <div class="block">
-          <h4>{display_name} — {store['name']} {metres_str}</h4>
-          <div>Precio: <strong>{latest['price']}</strong> {prod['currency']}</div>
-          <span class="confidence-tag {css_class}">{label}</span><br/>
-          <span class="small-muted">Última actualización: {latest['created_at']}</span>
-        </div>
-        """, unsafe_allow_html=True)
+        entries.append({
+            "pid": pid,
+            "sid": sid,
+            "display_name": display_name,
+            "raw_name": prod['name'],
+            "currency": prod['currency'],
+            "store_name": store['name'],
+            "meters_str": meters_str,
+            "latest_price": latest['price'],
+            "latest_date": latest['created_at'],
+            "count": count,
+            "label": label,
+            "css_class": css_class
+        })
+
+    # 6) Filtro por producto (case-insensitive, usando nombre normalizado y prettify)
+    if filter_text:
+        ft_norm = normalize_product(filter_text)
+        ft_lower = filter_text.strip().lower()
+        entries = [
+            e for e in entries
+            if (ft_norm in e["raw_name"]) or (ft_lower in e["display_name"].lower())
+        ]
+
+    # 7) Orden
+    if order_by == "Fecha (reciente)":
+        entries.sort(key=lambda e: e["latest_date"], reverse=True)
+    elif order_by == "Precio ascendente":
+        entries.sort(key=lambda e: (e["currency"], float(e["latest_price"])))
+    else:  # "Precio descendente"
+        entries.sort(key=lambda e: (e["currency"], float(e["latest_price"])), reverse=True)
+
+    # 8) Límite de tarjetas
+    entries = entries[:max_cards]
+
+    # 9) Render
+    if not entries:
+        st.info("No hay resultados con los filtros actuales.")
+    else:
+        for e in entries:
+            st.markdown(f"""
+            <div class="block">
+              <h4>{e['display_name']} — {e['store_name']} {e['meters_str']}</h4>
+              <div>Precio: <strong>{e['latest_price']}</strong> {e['currency']}</div>
+              <span class="confidence-tag {e['css_class']}">{e['label']}</span><br/>
+              <span class="small-muted">Última actualización: {e['latest_date']}</span>
+            </div>
+            """, unsafe_allow_html=True)
 
 # -------------------- Página Alertas --------------------
 elif page == "Alertas":
@@ -442,3 +491,4 @@ elif page == "Alertas":
                 st.write(f"🔔 Notificación #{n['id']} — avistamiento {n['sighting_id']} — {n['created_at']}")
     except Exception as e:
         st.error(f"Error al cargar notificaciones: {e}")
+``
