@@ -1,0 +1,16 @@
+
+# docker-compose.yml
+version: "3.8"
+
+services:
+  precios_cercanos:
+    build: .
+    container_name: precios_cercanos
+    ports:
+      - "8501:8501"
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+    volumes:
+      - .:/app
+    restart: unless-stopped

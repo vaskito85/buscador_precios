@@ -1,12 +1,15 @@
 
 # app.py
-import re
 import time
 import streamlit as st
 import streamlit.components.v1 as components
 from typing import List, Dict
 from collections import defaultdict
 from utils.supabase_client import get_supabase
+from utils.helpers import (
+    normalize_product, prettify_product, parse_coord,
+    confidence_label, confidence_class
+)
 
 # =========================
 # Configuración general
@@ -54,69 +57,12 @@ if st.session_state.debug and st.session_state.logs:
             st.write(f"[{entry['ts']}] {entry['level']}: {entry['msg']}")
 
 # =========================
-# Helpers de normalización
-# =========================
-UNITS_MAP = {"lt": "l", "l": "l", "kg": "kg", "gr": "g", "g": "g", "ml": "ml"}
-COMMON_WORDS_CAP = {"leche", "yerba", "arroz", "aceite", "azúcar", "fideos", "harina", "café", "te", "té"}
-
-def normalize_product(name: str) -> str:
-    """Versión canónica del nombre para DB: lower, trim, colapsa espacios, normaliza unidades y elimina puntuación."""
-    if not name:
-        return ""
-    s = name.strip().lower()
-    s = " ".join(s.split())  # colapsar espacios múltiples
-    s = re.sub(r"(\d+)\s*(lt|l|kg|gr|g|ml)\b", lambda m: f"{m.group(1)} {UNITS_MAP[m.group(2)]}", s)
-    s = " ".join(s.split())
-    tokens = s.split()
-    s = " ".join([UNITS_MAP[t] if t in UNITS_MAP else t for t in tokens])
-    s = re.sub(r"[.,;:]+", "", s)
-    return s
-
-def prettify_product(name: str) -> str:
-    """Presentación del nombre en UI: capitaliza palabras comunes, mantiene unidades en minúscula."""
-    if not name:
-        return ""
-    tokens = name.split()
-    pretty = []
-    for t in tokens:
-        if t in UNITS_MAP.values():  # unidades
-            pretty.append(t)
-        elif t in COMMON_WORDS_CAP:
-            pretty.append(t.capitalize())
-        else:
-            pretty.append(t[0].upper() + t[1:] if len(t) > 1 else t.upper())
-    return " ".join(pretty)
-
-# =========================
 # Otros helpers
 # =========================
-def parse_coord(txt: str):
-    try:
-        return float(txt)
-    except:
-        return None
-
 def get_user_id():
     sess = st.session_state.get("session")
     return getattr(getattr(sess, "user", None), "id", None)
 
-def confidence_label(count: int) -> str:
-    if count == 1:
-        return "Reportado por 1 persona (puede variar)"
-    if 2 <= count <= 3:
-        return f"Confirmado por {count} personas (confianza media)"
-    return f"Confirmado por {count} personas (alta confianza)"
-
-def confidence_class(count: int) -> str:
-    if count == 1:
-        return "confidence-red"
-    if 2 <= count <= 3:
-        return "confidence-yellow"
-    return "confidence-green"
-
-# =========================
-# Session guard (redirect)
-# =========================
 def require_auth() -> bool:
     """Verifica sesión y user_id. Si no hay, redirige a Login y muestra mensaje."""
     user_id = get_user_id()
@@ -131,7 +77,7 @@ def require_auth() -> bool:
 # Sidebar + navegación
 # =========================
 st.sidebar.title("🧭 Navegación")
-page = st.sidebar.radio("Secciones", ["Login", "Cargar Precio", "Lista de Precios", "Alertas"], key="nav")
+page = st.sidebar.radio("Secciones", ["Login", "Cargar Precio", "Lista de Precios", "Alertas", "Admin"], key="nav")
 
 if st.session_state.session:
     st.sidebar.success(f"Conectado: {st.session_state.user_email}")
@@ -210,7 +156,6 @@ if page == "Login":
 # PÁGINA CARGAR PRECIO
 # =========================
 elif page == "Cargar Precio":
-    # Session guard
     if not require_auth():
         st.stop()
 
@@ -297,7 +242,7 @@ elif page == "Cargar Precio":
         # Normalizar nombre antes de guardar/buscar
         product_name = normalize_product(product_name_input)
 
-        # === UP SERT por RPC (atómico) ===
+        # Upsert atómico por RPC
         try:
             pid_res = supabase.rpc("upsert_product", {"p_name": product_name, "p_currency": currency}).execute()
             product_id = pid_res.data[0]["id"] if pid_res.data else None
@@ -449,7 +394,6 @@ elif page == "Lista de Precios":
 # PÁGINA ALERTAS (Realtime)
 # =========================
 elif page == "Alertas":
-    # Session guard
     if not require_auth():
         st.stop()
 
@@ -463,7 +407,6 @@ elif page == "Alertas":
     if st.button("Activar alerta"):
         try:
             product_name = normalize_product(product_name_input)
-            # === UP SERT por RPC (atómico) ===
             pid_res = supabase.rpc("upsert_product", {"p_name": product_name, "p_currency": "ARS"}).execute()
             product_id = pid_res.data[0]["id"] if pid_res.data else None
             if not product_id:
@@ -495,12 +438,8 @@ elif page == "Alertas":
         st.error(f"Error al cargar notificaciones: {e}")
         add_log("ERROR", f"List notifications: {e}")
 
-    # -------------------------
-    # Realtime: suscripción live
-    # -------------------------
     st.divider()
     st.subheader("Notificaciones en tiempo real")
-
     def subscribe_notifications(uid: str):
         if st.session_state.rt_subscribed:
             return
@@ -521,8 +460,16 @@ elif page == "Alertas":
             add_log("ERROR", f"Realtime subscribe: {e}")
 
     subscribe_notifications(user_id)
+    
+# =====================
+# Auto-actualización con fragments (cada 5s)
+# =====================
+st.session_state.setdefault("notif_auto", True)
 
-    st.autorefresh(interval=5000, key="notif_autorefresh")
+@st.fragment(run_every="5s")
+def notif_fragment():
+    """Procesa eventos de notificaciones en tiempo real y muestra toasts."""
+    processed = 0
     while st.session_state.rt_events:
         payload = st.session_state.rt_events.pop(0)
         new_row = payload.get("new", {}) if isinstance(payload, dict) else {}
@@ -530,16 +477,79 @@ elif page == "Alertas":
         sid = new_row.get("sighting_id")
         created = new_row.get("created_at")
         st.toast(f"🔔 Nueva notificación #{nid} — avistamiento {sid} — {created}", icon="🔔")
+        processed += 1
+    if processed == 0:
+        st.caption("Sin notificaciones nuevas por el momento.")
 
-    cols_rt = st.columns(2)
-    if cols_rt[0].button("Detener notificaciones en vivo"):
+# Muestra el fragmento solo si la auto-actualización está activa
+if st.session_state.notif_auto:
+    notif_fragment()
+else:
+    st.info("⏸️ Auto-actualización pausada. Podés reanudarla cuando quieras.")
+
+# Controles
+cols_rt = st.columns(3)
+with cols_rt[0]:
+    if st.button("Actualizar ahora"):
+        st.rerun()
+with cols_rt[1]:
+    if st.session_state.notif_auto and st.button("Pausar auto-actualización"):
+        st.session_state.notif_auto = False
+        st.success("⏸️ Auto-actualización pausada.")
+with cols_rt[2]:
+    if (not st.session_state.notif_auto) and st.button("Reanudar auto-actualización"):
+        st.session_state.notif_auto = True
+        st.success("▶️ Auto-actualización reanudada.")
+
+# Botón adicional para detener la suscripción en vivo a Supabase (Realtime)
+cols_stop = st.columns(2)
+if cols_stop[0].button("Detener suscripción en vivo"):
+    try:
+        if st.session_state.rt_channel:
+            st.session_state.rt_channel.unsubscribe()
+        st.session_state.rt_subscribed = False
+        st.session_state.rt_channel = None
+        st.success("⏹️ Suscripción en vivo detenida.")
+    except Exception as e:
+        st.error(f"No pudimos detener la suscripción: {e}")
+elif page == "Admin":
+    if not require_auth():
+        st.stop()
+
+    st.title("⚙️ Panel de configuración (Settings)")
+
+    # Mostrar valores actuales
+    try:
+        rows = supabase.table("settings").select("*").eq("id", 1).execute().data
+        if not rows:
+            st.warning("No existe la fila de settings (id=1). Ejecutá settings_schema.sql.")
+            st.stop()
+        current = rows[0]
+    except Exception as e:
+        st.error(f"No se pudo leer settings: {e}")
+        st.stop()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        tol_pct = st.number_input("Tolerancia precio (±%)", min_value=0.0, max_value=100.0, value=float(current["validation_price_tolerance_pct"]*100.0), step=0.1)
+    with col2:
+        win_days = st.number_input("Ventana (días)", min_value=1, max_value=90, value=int(current["validation_window_days"]), step=1)
+    with col3:
+        min_matches = st.number_input("Mín. coincidencias", min_value=1, max_value=20, value=int(current["validation_min_matches"]), step=1)
+
+    st.caption("Para actualizar se requiere permiso de administrador (tabla public.admins).")
+
+    if st.button("Actualizar parámetros"):
         try:
-            if st.session_state.rt_channel:
-                st.session_state.rt_channel.unsubscribe()
-            st.session_state.rt_subscribed = False
-            st.session_state.rt_channel = None
-            st.success("⏹️ Suscripción en vivo detenida.")
-            add_log("INFO", "Realtime unsubscribed")
+            # RPC con chequeo de administrador en backend
+            uid = get_user_id()
+            res = supabase.rpc("update_settings", {
+                "p_tolerance": float(tol_pct) / 100.0,
+                "p_window_days": int(win_days),
+                "p_min_matches": int(min_matches)
+            }).execute()
+            st.success("✅ Parámetros actualizados.")
         except Exception as e:
-            st.error(f"No pudimos detener la suscripción: {e}")
-            add_log("ERROR", f"Realtime unsubscribe: {e}")
+            st.error(f"No pudimos actualizar los parámetros: {e}")
+            st.info("Verificá que tu user_id esté en la tabla public.admins.")
+``

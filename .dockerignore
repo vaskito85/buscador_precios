@@ -1,0 +1,16 @@
+
+# .dockerignore
+.git
+.github
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.venv
+env
+venv
+.build
+dist
+supabase_sql
+tests
+``
