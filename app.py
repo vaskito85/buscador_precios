@@ -35,6 +35,11 @@ st.session_state.setdefault("auth_msg", None)
 st.session_state.setdefault("otp_last_send", 0.0)
 st.session_state.setdefault("logs", [])
 
+# Estado para Realtime
+st.session_state.setdefault("rt_subscribed", False)
+st.session_state.setdefault("rt_channel", None)
+st.session_state.setdefault("rt_events", [])  # cola de eventos entrantes
+
 # =========================
 # Mini logging (sidebar)
 # =========================
@@ -51,14 +56,7 @@ if st.session_state.debug and st.session_state.logs:
 # =========================
 # Helpers de normalización
 # =========================
-UNITS_MAP = {
-    "lt": "l",
-    "l": "l",
-    "kg": "kg",
-    "gr": "g",
-    "g": "g",
-    "ml": "ml"
-}
+UNITS_MAP = {"lt": "l", "l": "l", "kg": "kg", "gr": "g", "g": "g", "ml": "ml"}
 COMMON_WORDS_CAP = {"leche", "yerba", "arroz", "aceite", "azúcar", "fideos", "harina", "café", "te", "té"}
 
 def normalize_product(name: str) -> str:
@@ -299,26 +297,16 @@ elif page == "Cargar Precio":
         # Normalizar nombre antes de guardar/buscar
         product_name = normalize_product(product_name_input)
 
-        # Crear producto (optimista) o buscar por UNIQUE(name, currency)
+        # === UP SERT por RPC (atómico) ===
         try:
-            product_res = supabase.table("products").insert({"name": product_name, "currency": currency}).execute()
-            product_id = product_res.data[0]["id"]
-        except Exception:
-            existing = (
-                supabase.table("products")
-                .select("id")
-                .eq("name", product_name)
-                .eq("currency", currency)
-                .limit(1)
-                .execute()
-                .data
-            )
-            if existing:
-                product_id = existing[0]["id"]
-            else:
-                st.error("No se pudo crear ni encontrar el producto.")
-                add_log("ERROR", "Insert/find product failed")
-                st.stop()
+            pid_res = supabase.rpc("upsert_product", {"p_name": product_name, "p_currency": currency}).execute()
+            product_id = pid_res.data[0]["id"] if pid_res.data else None
+            if not product_id:
+                raise RuntimeError("upsert_product no devolvió id")
+        except Exception as e:
+            st.error(f"No se pudo crear/obtener el producto: {e}")
+            add_log("ERROR", f"upsert_product: {e}")
+            st.stop()
 
         # Insertar avistamiento
         try:
@@ -458,7 +446,7 @@ elif page == "Lista de Precios":
             """, unsafe_allow_html=True)
 
 # =========================
-# PÁGINA ALERTAS
+# PÁGINA ALERTAS (Realtime)
 # =========================
 elif page == "Alertas":
     # Session guard
@@ -475,13 +463,11 @@ elif page == "Alertas":
     if st.button("Activar alerta"):
         try:
             product_name = normalize_product(product_name_input)
-            # Buscar o crear producto con nombre normalizado
-            prod_q = supabase.table("products").select("id, currency").eq("name", product_name).limit(1).execute().data
-            if not prod_q:
-                prod_ins = supabase.table("products").insert({"name": product_name, "currency": "ARS"}).execute()
-                product_id = prod_ins.data[0]["id"]
-            else:
-                product_id = prod_q[0]["id"]
+            # === UP SERT por RPC (atómico) ===
+            pid_res = supabase.rpc("upsert_product", {"p_name": product_name, "p_currency": "ARS"}).execute()
+            product_id = pid_res.data[0]["id"] if pid_res.data else None
+            if not product_id:
+                raise RuntimeError("upsert_product no devolvió id")
 
             supabase.table("alerts").insert({
                 "user_id": get_user_id(),
@@ -497,8 +483,9 @@ elif page == "Alertas":
             add_log("ERROR", f"Insert alert: {e}")
 
     st.subheader("Mis notificaciones")
+    user_id = get_user_id()
     try:
-        notes = supabase.table("notifications").select("id, alert_id, sighting_id, created_at").eq("user_id", get_user_id()).order("created_at", desc=True).execute().data
+        notes = supabase.table("notifications").select("id, alert_id, sighting_id, created_at").eq("user_id", user_id).order("created_at", desc=True).execute().data
         if not notes:
             st.info("Todavía no hay notificaciones.")
         else:
@@ -507,3 +494,52 @@ elif page == "Alertas":
     except Exception as e:
         st.error(f"Error al cargar notificaciones: {e}")
         add_log("ERROR", f"List notifications: {e}")
+
+    # -------------------------
+    # Realtime: suscripción live
+    # -------------------------
+    st.divider()
+    st.subheader("Notificaciones en tiempo real")
+
+    def subscribe_notifications(uid: str):
+        if st.session_state.rt_subscribed:
+            return
+        try:
+            ch = supabase.channel(f"notifications_user_{uid}")
+            ch.on(
+                "postgres_changes",
+                {"event": "INSERT", "schema": "public", "table": "notifications", "filter": f"user_id=eq.{uid}"},
+                lambda payload: st.session_state.rt_events.append(payload)
+            )
+            ch.subscribe()
+            st.session_state.rt_channel = ch
+            st.session_state.rt_subscribed = True
+            st.success("🔴 Suscripción en vivo activa. Te avisaremos cuando llegue una nueva notificación.")
+            add_log("INFO", "Realtime subscribed")
+        except Exception as e:
+            st.warning("No pudimos establecer la suscripción en vivo. Usaremos actualización automática cada 5 segundos.")
+            add_log("ERROR", f"Realtime subscribe: {e}")
+
+    subscribe_notifications(user_id)
+
+    st.autorefresh(interval=5000, key="notif_autorefresh")
+    while st.session_state.rt_events:
+        payload = st.session_state.rt_events.pop(0)
+        new_row = payload.get("new", {}) if isinstance(payload, dict) else {}
+        nid = new_row.get("id")
+        sid = new_row.get("sighting_id")
+        created = new_row.get("created_at")
+        st.toast(f"🔔 Nueva notificación #{nid} — avistamiento {sid} — {created}", icon="🔔")
+
+    cols_rt = st.columns(2)
+    if cols_rt[0].button("Detener notificaciones en vivo"):
+        try:
+            if st.session_state.rt_channel:
+                st.session_state.rt_channel.unsubscribe()
+            st.session_state.rt_subscribed = False
+            st.session_state.rt_channel = None
+            st.success("⏹️ Suscripción en vivo detenida.")
+            add_log("INFO", "Realtime unsubscribed")
+        except Exception as e:
+            st.error(f"No pudimos detener la suscripción: {e}")
+            add_log("ERROR", f"Realtime unsubscribe: {e}")
