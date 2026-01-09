@@ -1,5 +1,6 @@
 
 # app.py
+import re
 import streamlit as st
 import streamlit.components.v1 as components
 from typing import List, Dict
@@ -23,7 +24,76 @@ supabase = get_supabase()
 st.session_state.setdefault("session", None)
 st.session_state.setdefault("user_email", None)
 
-# Helpers
+# -------------------- Helpers de normalización --------------------
+UNITS_MAP = {
+    "lt": "l",
+    "l": "l",
+    "kg": "kg",
+    "gr": "g",
+    "g": "g",
+    "ml": "ml"
+}
+COMMON_WORDS_CAP = {"leche", "yerba", "arroz", "aceite", "azúcar", "fideos", "harina", "café", "te", "té"}
+
+def normalize_product(name: str) -> str:
+    """
+    Genera una versión canónica del nombre de producto para guardar/buscar en DB.
+    - minúsculas
+    - trim
+    - colapsa espacios
+    - normaliza unidades y espacio entre número y unidad (e.g., "1L" -> "1 l", "500ml" -> "500 ml")
+    - reemplaza 'lt' por 'l', 'gr' por 'g', etc.
+    """
+    if not name:
+        return ""
+    s = name.strip().lower()
+    # colapsar espacios múltiples
+    s = " ".join(s.split())
+
+    # normalizar unidades pegadas a números: "1l", "500ml", "1kg", "250gr"
+    # deja "numero unidad" con espacio: "1 l", "500 ml", "1 kg", "250 g"
+    s = re.sub(r"(\d+)\s*(lt|l|kg|gr|g|ml)\b", lambda m: f"{m.group(1)} {UNITS_MAP[m.group(2)]}", s)
+
+    # si quedó "numero  l" con doble espacio por alguna razón, colapsar
+    s = " ".join(s.split())
+
+    # normalizar unidades sueltas (por si vinieran separadas incorrectamente)
+    tokens = s.split()
+    norm_tokens = []
+    for t in tokens:
+        if t in UNITS_MAP:
+            norm_tokens.append(UNITS_MAP[t])
+        else:
+            norm_tokens.append(t)
+    s = " ".join(norm_tokens)
+
+    # remover puntuación innecesaria común (mantener '-' si fuera parte del nombre)
+    s = re.sub(r"[.,;:]+", "", s)
+
+    return s
+
+def prettify_product(name: str) -> str:
+    """
+    Mejora la presentación del nombre normalizado para UI:
+    - Capitaliza la primera letra de palabras comunes
+    - Mantiene unidades en minúscula
+    - No pone todo Title Case para evitar 'Ml' o 'Kg'
+    """
+    if not name:
+        return ""
+    tokens = name.split()
+    pretty = []
+    for t in tokens:
+        if t in UNITS_MAP.values():  # unidades
+            pretty.append(t)
+        elif t in COMMON_WORDS_CAP:
+            pretty.append(t.capitalize())
+        else:
+            # Capitaliza la primera letra de palabras que no son unidades
+            pretty.append(t[0].upper() + t[1:] if len(t) > 1 else t.upper())
+    return " ".join(pretty)
+
+# -------------------- Otros helpers --------------------
 def parse_coord(txt: str):
     try:
         return float(txt)
@@ -108,21 +178,21 @@ elif page == "Cargar Precio":
         st.warning("Iniciá sesión primero en la sección Login.")
         st.stop()
 
-    # Ubicación (por ahora manual + botón de geolocalización)
+    # Ubicación (manual + botón de geolocalización)
     st.subheader("Tu ubicación")
     col_lat, col_lon, col_rad = st.columns([1, 1, 1])
     lat_txt = col_lat.text_input("Latitud", placeholder="-38.7183")
     lon_txt = col_lon.text_input("Longitud", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio de búsqueda de locales (km)", 1, 15, 5)
 
-    # Botón "Usar mi ubicación" (incrustado via componente HTML)
+    # Botón "Usar mi ubicación"
     try:
         components.html(
             open("components/geolocation.html", "r", encoding="utf-8").read(),
             height=80
         )
     except Exception:
-        st.caption("Tip: podés agregar el botón 'Usar mi ubicación' creando components/geolocation.html")
+        st.caption("Tip: agregá components/geolocation.html para usar el GPS del navegador.")
 
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
@@ -169,12 +239,12 @@ elif page == "Cargar Precio":
                         st.error(f"No se pudo crear el local: {e}")
 
     st.subheader("Producto y precio")
-    product_name = st.text_input("Nombre del producto")
+    product_name_input = st.text_input("Nombre del producto")
     price = st.number_input("Precio", min_value=0.0, step=0.01, format="%.2f")
     currency = st.selectbox("Moneda", ["ARS", "USD", "EUR"])
 
     if st.button("Registrar precio"):
-        if not product_name:
+        if not product_name_input:
             st.error("Ingresá el nombre del producto.")
             st.stop()
         if not store_choice:
@@ -189,15 +259,26 @@ elif page == "Cargar Precio":
             st.error("Tu sesión expiró. Iniciá sesión nuevamente.")
             st.stop()
 
-        # Crear producto (optimista) o buscar por UNIQUE(name, currency)
+        # Normalizar nombre antes de guardar/buscar
+        product_name = normalize_product(product_name_input)
+
+        # Crear producto (optimista) o buscar por UNIQUE(name, currency) usando el nombre normalizado
         try:
             product_res = supabase.table("products").insert({
-                "name": product_name.strip(),
+                "name": product_name,
                 "currency": currency
             }).execute()
             product_id = product_res.data[0]["id"]
         except Exception:
-            existing = supabase.table("products").select("id").eq("name", product_name.strip()).eq("currency", currency).limit(1).execute().data
+            existing = (
+                supabase.table("products")
+                .select("id")
+                .eq("name", product_name)
+                .eq("currency", currency)
+                .limit(1)
+                .execute()
+                .data
+            )
             if existing:
                 product_id = existing[0]["id"]
             else:
@@ -226,7 +307,7 @@ elif page == "Lista de Precios":
     lon_txt = col_lon.text_input("Longitud", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio (km)", 1, 15, 5)
 
-    # Botón "Usar mi ubicación" aquí también
+    # Botón "Usar mi ubicación"
     try:
         components.html(
             open("components/geolocation.html", "r", encoding="utf-8").read(),
@@ -277,21 +358,22 @@ elif page == "Lista de Precios":
     for s in sightings:
         grouped[(s['product_id'], s['store_id'])].append(s)
 
-    # 5) Render
+    # 5) Render (mostrar nombre "prettify")
     for (pid, sid), items in grouped.items():
         items_sorted = sorted(items, key=lambda x: x['created_at'], reverse=True)
         latest = items_sorted[0]
         count = len(items)
         label = confidence_label(count)
         css_class = confidence_class(count)
-        prod = prod_map.get(pid, {"name": f"Producto {pid}", "currency": "ARS"})
+        prod = prod_map.get(pid, {"name": f"producto {pid}", "currency": "ARS"})
         store = store_map.get(sid, {"name": f"Local {sid}", "meters": None})
 
-        meters_str = f"{int(store['meters'])} m" if store.get("meters") is not None else ""
+        metres_str = f"{int(store['meters'])} m" if store.get("meters") is not None else ""
+        display_name = prettify_product(prod['name'])
 
         st.markdown(f"""
         <div class="block">
-          <h4>{prod['name']} — {store['name']} {meters_str}</h4>
+          <h4>{display_name} — {store['name']} {metres_str}</h4>
           <div>Precio: <strong>{latest['price']}</strong> {prod['currency']}</div>
           <span class="confidence-tag {css_class}">{label}</span><br/>
           <span class="small-muted">Última actualización: {latest['created_at']}</span>
@@ -311,16 +393,26 @@ elif page == "Alertas":
         st.stop()
 
     st.subheader("Crear alerta")
-    product_name = st.text_input("Producto")
+    product_name_input = st.text_input("Producto")
     target_price = st.number_input("Alertarme si el precio es menor o igual a…", min_value=0.0, step=0.01, format="%.2f")
     radius_km = st.slider("Radio de alerta (km)", 1, 20, 5)
 
     if st.button("Activar alerta"):
         try:
-            # Buscar o crear producto
-            prod_q = supabase.table("products").select("id, currency").eq("name", product_name.strip()).limit(1).execute().data
+            # Normalizar antes de buscar/crear
+            product_name = normalize_product(product_name_input)
+
+            # Buscar o crear producto con nombre normalizado
+            prod_q = (
+                supabase.table("products")
+                .select("id, currency")
+                .eq("name", product_name)
+                .limit(1)
+                .execute()
+                .data
+            )
             if not prod_q:
-                prod_ins = supabase.table("products").insert({"name": product_name.strip(), "currency": "ARS"}).execute()
+                prod_ins = supabase.table("products").insert({"name": product_name, "currency": "ARS"}).execute()
                 product_id = prod_ins.data[0]["id"]
             else:
                 product_id = prod_q[0]["id"]
