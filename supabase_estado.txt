@@ -1,0 +1,279 @@
+De esto:
+
+SELECT table_name
+FROM information_schema.tables
+WHERE table_schema = 'public'
+ORDER BY table_name;
+
+
+me devolvio esto:
+
+| table_name    |
+| ------------- |
+| alerts        |
+| notifications |
+| products      |
+| profiles      |
+| sightings     |
+| stores        |
+
+
+De esto:
+
+SELECT table_name, column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_schema = 'public'
+ORDER BY table_name, ordinal_position;
+
+Me evolvio esto:
+
+| table_name    | column_name       | data_type                | is_nullable | column_default                            |
+| ------------- | ----------------- | ------------------------ | ----------- | ----------------------------------------- |
+| alerts        | id                | bigint                   | NO          | nextval('alerts_id_seq'::regclass)        |
+| alerts        | user_id           | uuid                     | NO          | null                                      |
+| alerts        | product_id        | bigint                   | NO          | null                                      |
+| alerts        | target_price      | numeric                  | YES         | null                                      |
+| alerts        | radius_km         | numeric                  | YES         | 5                                         |
+| alerts        | active            | boolean                  | YES         | true                                      |
+| alerts        | created_at        | timestamp with time zone | YES         | now()                                     |
+| notifications | id                | bigint                   | NO          | nextval('notifications_id_seq'::regclass) |
+| notifications | user_id           | uuid                     | NO          | null                                      |
+| notifications | alert_id          | bigint                   | YES         | null                                      |
+| notifications | sighting_id       | bigint                   | YES         | null                                      |
+| notifications | created_at        | timestamp with time zone | YES         | now()                                     |
+| notifications | sent              | boolean                  | YES         | false                                     |
+| products      | id                | bigint                   | NO          | nextval('products_id_seq'::regclass)      |
+| products      | name              | text                     | NO          | null                                      |
+| products      | currency          | text                     | YES         | 'ARS'::text                               |
+| products      | created_at        | timestamp with time zone | YES         | now()                                     |
+| profiles      | user_id           | uuid                     | NO          | null                                      |
+| profiles      | display_name      | text                     | YES         | null                                      |
+| profiles      | default_radius_km | numeric                  | YES         | 5                                         |
+| profiles      | created_at        | timestamp with time zone | YES         | now()                                     |
+| sightings     | id                | bigint                   | NO          | nextval('sightings_id_seq'::regclass)     |
+| sightings     | user_id           | uuid                     | NO          | null                                      |
+| sightings     | product_id        | bigint                   | NO          | null                                      |
+| sightings     | store_id          | bigint                   | NO          | null                                      |
+| sightings     | price             | numeric                  | NO          | null                                      |
+| sightings     | lat               | numeric                  | NO          | null                                      |
+| sightings     | lon               | numeric                  | NO          | null                                      |
+| sightings     | geom              | USER-DEFINED             | YES         | null                                      |
+| sightings     | created_at        | timestamp with time zone | YES         | now()                                     |
+| sightings     | is_validated      | boolean                  | YES         | false                                     |
+| stores        | id                | bigint                   | NO          | nextval('stores_id_seq'::regclass)        |
+| stores        | name              | text                     | NO          | null                                      |
+| stores        | address           | text                     | YES         | null                                      |
+| stores        | lat               | numeric                  | NO          | null                                      |
+| stores        | lon               | numeric                  | NO          | null                                      |
+| stores        | geom              | USER-DEFINED             | YES         | null                                      |
+| stores        | created_at        | timestamp with time zone | YES         | now()                                     |
+
+De esto:
+
+-- Primary keys
+SELECT
+  tc.table_name, kc.column_name
+FROM information_schema.table_constraints tc
+JOIN information_schema.key_column_usage kc
+  ON kc.constraint_name = tc.constraint_name
+WHERE tc.table_schema = 'public'
+  AND tc.constraint_type = 'PRIMARY KEY'
+ORDER BY tc.table_name, kc.ordinal_position;
+
+-- Foreign keys
+SELECT
+  tc.table_name,
+  kc.column_name,
+  ccu.table_name AS foreign_table,
+  ccu.column_name AS foreign_column
+FROM information_schema.table_constraints tc
+JOIN information_schema.key_column_usage kc
+  ON kc.constraint_name = tc.constraint_name
+JOIN information_schema.constraint_column_usage ccu
+  ON ccu.constraint_name = tc.constraint_name
+WHERE tc.table_schema = 'public'
+  AND tc.constraint_type = 'FOREIGN KEY'
+ORDER BY tc.table_name, kc.ordinal_position;
+
+ME devolvio:
+
+| table_name    | column_name | foreign_table | foreign_column |
+| ------------- | ----------- | ------------- | -------------- |
+| alerts        | product_id  | products      | id             |
+| notifications | alert_id    | alerts        | id             |
+| notifications | sighting_id | sightings     | id             |
+| sightings     | product_id  | products      | id             |
+| sightings     | store_id    | stores        | id             |
+
+De esto:
+
+SELECT
+  i.tablename AS table_name,
+  i.indexname AS index_name,
+  i.indexdef   AS index_def
+FROM pg_indexes i
+WHERE schemaname = 'public'
+ORDER BY i.tablename, i.indexname;
+
+ME devolvio:
+
+| table_name    | index_name                  | index_def                                                                                       |
+| ------------- | --------------------------- | ----------------------------------------------------------------------------------------------- |
+| alerts        | alerts_pkey                 | CREATE UNIQUE INDEX alerts_pkey ON public.alerts USING btree (id)                               |
+| alerts        | idx_alerts_user             | CREATE INDEX idx_alerts_user ON public.alerts USING btree (user_id)                             |
+| notifications | idx_notifications_user      | CREATE INDEX idx_notifications_user ON public.notifications USING btree (user_id)               |
+| notifications | notifications_pkey          | CREATE UNIQUE INDEX notifications_pkey ON public.notifications USING btree (id)                 |
+| products      | products_name_currency_key  | CREATE UNIQUE INDEX products_name_currency_key ON public.products USING btree (name, currency)  |
+| products      | products_pkey               | CREATE UNIQUE INDEX products_pkey ON public.products USING btree (id)                           |
+| profiles      | profiles_pkey               | CREATE UNIQUE INDEX profiles_pkey ON public.profiles USING btree (user_id)                      |
+| sightings     | idx_sightings_created       | CREATE INDEX idx_sightings_created ON public.sightings USING btree (created_at)                 |
+| sightings     | idx_sightings_product_store | CREATE INDEX idx_sightings_product_store ON public.sightings USING btree (product_id, store_id) |
+| sightings     | sightings_pkey              | CREATE UNIQUE INDEX sightings_pkey ON public.sightings USING btree (id)                         |
+| stores        | idx_stores_geom             | CREATE INDEX idx_stores_geom ON public.stores USING gist (geom)                                 |
+| stores        | stores_pkey                 | CREATE UNIQUE INDEX stores_pkey ON public.stores USING btree (id)                               |
+
+
+De esto:
+
+
+SELECT
+  pol.tablename,
+  pol.policyname,
+  pol.permissive,
+  pol.roles,
+  pol.cmd,
+  pol.qual,
+  pol.with_check
+FROM pg_policies pol
+WHERE pol.schemaname = 'public'
+ORDER BY pol.tablename, pol.policyname;
+
+Me devolvio:
+
+| tablename     | policyname               | permissive | roles           | cmd    | qual                   | with_check             |
+| ------------- | ------------------------ | ---------- | --------------- | ------ | ---------------------- | ---------------------- |
+| alerts        | insert own alerts        | PERMISSIVE | {authenticated} | INSERT | null                   | (auth.uid() = user_id) |
+| alerts        | select own alerts        | PERMISSIVE | {authenticated} | SELECT | (auth.uid() = user_id) | null                   |
+| notifications | select own notifications | PERMISSIVE | {authenticated} | SELECT | (auth.uid() = user_id) | null                   |
+| sightings     | insert own sightings     | PERMISSIVE | {authenticated} | INSERT | null                   | (auth.uid() = user_id) |
+| sightings     | select sightings         | PERMISSIVE | {authenticated} | SELECT | true                   | null                   |
+| sightings     | update own sightings     | PERMISSIVE | {authenticated} | UPDATE | (auth.uid() = user_id) | null                   |
+
+De esto:
+
+
+SELECT
+  n.nspname AS schema,
+  p.proname AS function_name,
+  pg_get_functiondef(p.oid) AS definition
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+ORDER BY p.proname;
+
+
+Me devolvio:
+
+| schema | function_name      | definition                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| public | nearby_stores      | CREATE OR REPLACE FUNCTION public.nearby_stores(lat numeric, lon numeric, radius_km numeric)
+ RETURNS TABLE(id bigint, name text, address text, lat numeric, lon numeric, meters numeric)
+ LANGUAGE sql
+AS $function$
+  with params as (
+    select ST_SetSRID(ST_MakePoint(lon, lat), 4326)::geography as user_point,
+           radius_km * 1000 as radius_m
+  )
+  select s.id, s.name, s.address, s.lat, s.lon,
+         ST_Distance(s.geom, (select user_point from params)) as meters
+  from public.stores s
+  where ST_Distance(s.geom, (select user_point from params)) <= (select radius_m from params)
+  order by meters asc;
+$function$
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| public | on_sighting_insert | CREATE OR REPLACE FUNCTION public.on_sighting_insert()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+declare
+  total_matches int;
+  validated boolean;
+begin
+  -- Coincidencias en el mismo producto/local dentro de ±1% y últimos 14 días
+  select count(*) into total_matches
+  from public.sightings s
+  where s.product_id = NEW.product_id
+    and s.store_id = NEW.store_id
+    and s.created_at >= now() - interval '14 days'
+    and abs((s.price - NEW.price) / NULLIF(NEW.price, 0)) <= 0.01;
+
+  validated := (total_matches >= 3);
+
+  if validated then
+    update public.sightings set is_validated = true where id = NEW.id;
+
+    -- Notificaciones para alertas del producto dentro del radio
+    insert into public.notifications (user_id, alert_id, sighting_id)
+    select a.user_id, a.id, NEW.id
+    from public.alerts a
+    join public.stores st on st.id = NEW.store_id
+    where a.active = true
+      and a.product_id = NEW.product_id
+      and (a.target_price is null or NEW.price <= a.target_price)
+      and ST_Distance(
+            st.geom,
+            ST_SetSRID(ST_MakePoint(NEW.lon, NEW.lat), 4326)::geography
+          ) <= a.radius_km * 1000;
+  end if;
+
+  return NEW;
+end;
+$function$
+ |
+ 
+ De esto:
+ 
+-- Extensiones habilitadas
+SELECT * FROM pg_available_extensions WHERE installed_version IS NOT NULL ORDER BY name;
+
+--
+
+ME devolvi:
+
+| name               | default_version | installed_version | comment                                                                |
+| ------------------ | --------------- | ----------------- | ---------------------------------------------------------------------- |
+| pg_graphql         | 1.5.11          | 1.5.11            | pg_graphql: GraphQL support                                            |
+| pg_stat_statements | 1.11            | 1.11              | track planning and execution statistics of all SQL statements executed |
+| pgcrypto           | 1.3             | 1.3               | cryptographic functions                                                |
+| plpgsql            | 1.0             | 1.0               | PL/pgSQL procedural language                                           |
+| postgis            | 3.3.7           | 3.3.7             | PostGIS geometry and geography spatial types and functions             |
+| supabase_vault     | 0.3.1           | 0.3.1             | Supabase Vault Extension                                               |
+| uuid-ossp          | 1.1             | 1.1               | generate universally unique identifiers (UUIDs)                        |
+
+De esto:
+
+
+SELECT 'CREATE TABLE ' || quote_ident(n.nspname) || '.' || quote_ident(c.relname) || E' (\n' ||
+       string_agg('  ' || a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod) ||
+                  CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE '' END ||
+                  CASE WHEN a.atthasdef THEN ' DEFAULT ' || pg_get_expr(d.adbin, d.adrelid) ELSE '' END,
+                  E',\n') || E'\n);' AS create_table
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
+WHERE n.nspname = 'public'
+  AND c.relkind = 'r'  -- tablas
+  AND c.relname = 'products'  -- 👈 cambia por la tabla que quieras
+GROUP BY n.nspname, c.relname;
+
+Me devolvio:
+
+| create_table                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CREATE TABLE public.products (
+  id bigint NOT NULL DEFAULT nextval('products_id_seq'::regclass),
+  name text NOT NULL,
+  currency text DEFAULT 'ARS'::text,
+  created_at timestamp with time zone DEFAULT now()
+); |
