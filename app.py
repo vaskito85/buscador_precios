@@ -1,4 +1,3 @@
-
 import streamlit as st
 from utils.supabase_client import get_supabase
 from typing import List, Dict
@@ -262,4 +261,4 @@ elif page == "Alertas":
                 st.write(f"🔔 Notificación #{n['id']} — avistamiento {n['sighting_id']} — {n['created_at']}")
     except Exception as e:
         st.error(f"Error al cargar notificaciones: {e}")
-``
+
