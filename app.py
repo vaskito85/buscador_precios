@@ -34,7 +34,7 @@ if st.session_state.session:
             pass
         st.session_state.session = None
         st.session_state.user_email = None
-        st.experimental_rerun()
+        st.rerun()
 
 # ---------------- Página Login (OTP) ----------------
 if page == "Login":
@@ -66,7 +66,7 @@ if page == "Login":
                 st.session_state.session = session
                 st.session_state.user_email = email
                 st.success("¡Listo! Sesión iniciada.")
-                st.experimental_rerun()
+                st.rerun()
             except Exception as e:
                 st.error(f"No pudimos validar el código: {e}")
 
