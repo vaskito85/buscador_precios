@@ -1,13 +1,16 @@
 
 # app.py
 import re
+import time
 import streamlit as st
 import streamlit.components.v1 as components
 from typing import List, Dict
 from collections import defaultdict
 from utils.supabase_client import get_supabase
 
+# =========================
 # Configuración general
+# =========================
 st.set_page_config(page_title="Precios Cercanos", layout="wide")
 
 # Cargar CSS externo (styles.css) correctamente
@@ -24,7 +27,30 @@ supabase = get_supabase()
 st.session_state.setdefault("session", None)
 st.session_state.setdefault("user_email", None)
 
-# -------------------- Helpers de normalización --------------------
+# Estado para navegación programática (session-guard)
+st.session_state.setdefault("nav", "Login")
+st.session_state.setdefault("auth_msg", None)
+
+# Estado para cooldown OTP y logging
+st.session_state.setdefault("otp_last_send", 0.0)
+st.session_state.setdefault("logs", [])
+
+# =========================
+# Mini logging (sidebar)
+# =========================
+def add_log(level: str, msg: str):
+    """Agregar un log simple en memoria."""
+    st.session_state.logs.append({"level": level, "msg": msg, "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
+
+st.sidebar.checkbox("🧪 Modo debug", key="debug", value=False)
+if st.session_state.debug and st.session_state.logs:
+    with st.sidebar.expander("Logs recientes", expanded=False):
+        for entry in reversed(st.session_state.logs[-20:]):
+            st.write(f"[{entry['ts']}] {entry['level']}: {entry['msg']}")
+
+# =========================
+# Helpers de normalización
+# =========================
 UNITS_MAP = {
     "lt": "l",
     "l": "l",
@@ -36,47 +62,20 @@ UNITS_MAP = {
 COMMON_WORDS_CAP = {"leche", "yerba", "arroz", "aceite", "azúcar", "fideos", "harina", "café", "te", "té"}
 
 def normalize_product(name: str) -> str:
-    """
-    Genera una versión canónica del nombre de producto para guardar/buscar en DB.
-    - minúsculas
-    - trim
-    - colapsa espacios
-    - normaliza unidades y espacio entre número y unidad (e.g., "1L" -> "1 l", "500ml" -> "500 ml")
-    - reemplaza 'lt' por 'l', 'gr' por 'g', etc.
-    """
+    """Versión canónica del nombre para DB: lower, trim, colapsa espacios, normaliza unidades y elimina puntuación."""
     if not name:
         return ""
     s = name.strip().lower()
-    # colapsar espacios múltiples
-    s = " ".join(s.split())
-
-    # normalizar unidades pegadas a números: "1l", "500ml", "1kg", "250gr"
+    s = " ".join(s.split())  # colapsar espacios múltiples
     s = re.sub(r"(\d+)\s*(lt|l|kg|gr|g|ml)\b", lambda m: f"{m.group(1)} {UNITS_MAP[m.group(2)]}", s)
-
-    # colapsar por si quedaron dobles espacios
     s = " ".join(s.split())
-
-    # normalizar tokens sueltos de unidades
     tokens = s.split()
-    norm_tokens = []
-    for t in tokens:
-        if t in UNITS_MAP:
-            norm_tokens.append(UNITS_MAP[t])
-        else:
-            norm_tokens.append(t)
-    s = " ".join(norm_tokens)
-
-    # remover puntuación común
+    s = " ".join([UNITS_MAP[t] if t in UNITS_MAP else t for t in tokens])
     s = re.sub(r"[.,;:]+", "", s)
-
     return s
 
 def prettify_product(name: str) -> str:
-    """
-    Mejora la presentación del nombre normalizado para UI:
-    - Capitaliza la primera letra de palabras comunes
-    - Mantiene unidades en minúscula
-    """
+    """Presentación del nombre en UI: capitaliza palabras comunes, mantiene unidades en minúscula."""
     if not name:
         return ""
     tokens = name.split()
@@ -90,7 +89,9 @@ def prettify_product(name: str) -> str:
             pretty.append(t[0].upper() + t[1:] if len(t) > 1 else t.upper())
     return " ".join(pretty)
 
-# -------------------- Otros helpers --------------------
+# =========================
+# Otros helpers
+# =========================
 def parse_coord(txt: str):
     try:
         return float(txt)
@@ -115,39 +116,75 @@ def confidence_class(count: int) -> str:
         return "confidence-yellow"
     return "confidence-green"
 
-# Sidebar
+# =========================
+# Session guard (redirect)
+# =========================
+def require_auth() -> bool:
+    """Verifica sesión y user_id. Si no hay, redirige a Login y muestra mensaje."""
+    user_id = get_user_id()
+    if not (st.session_state.session and user_id):
+        st.session_state.auth_msg = "Tu sesión no está activa. Iniciá sesión para continuar."
+        st.session_state.nav = "Login"
+        st.rerun()
+        return False
+    return True
+
+# =========================
+# Sidebar + navegación
+# =========================
 st.sidebar.title("🧭 Navegación")
-page = st.sidebar.radio("Secciones", ["Login", "Cargar Precio", "Lista de Precios", "Alertas"])
+page = st.sidebar.radio("Secciones", ["Login", "Cargar Precio", "Lista de Precios", "Alertas"], key="nav")
 
 if st.session_state.session:
     st.sidebar.success(f"Conectado: {st.session_state.user_email}")
     if st.sidebar.button("Cerrar sesión"):
         try:
             supabase.auth.sign_out()
-        except Exception:
-            pass
+            add_log("INFO", "Sign out OK")
+        except Exception as e:
+            add_log("ERROR", f"Sign out: {e}")
         st.session_state.session = None
         st.session_state.user_email = None
+        st.session_state.nav = "Login"
         st.rerun()
 
-# -------------------- Página Login (OTP) --------------------
+# =========================
+# PÁGINA LOGIN (OTP)
+# =========================
 if page == "Login":
     st.title("🔐 Login (OTP por email)")
+    if st.session_state.auth_msg:
+        st.info(st.session_state.auth_msg)
+        st.session_state.auth_msg = None
+
     st.write("Ingresá tu email. Te enviaremos un **código OTP de 6 dígitos** por correo. Pegalo aquí para iniciar sesión.")
-
     email = st.text_input("Email", placeholder="tu@correo.com")
-    col1, col2 = st.columns(2)
 
+    # Cooldown OTP (60s)
+    COOLDOWN_SEC = 60
+    now = time.time()
+    elapsed = now - st.session_state.otp_last_send
+    cooldown_active = elapsed < COOLDOWN_SEC
+    remaining = max(0, int(COOLDOWN_SEC - elapsed))
+
+    col1, col2 = st.columns(2)
     with col1:
-        if st.button("Enviar código (OTP)"):
-            if not email or "@" not in email:
-                st.error("Email inválido.")
-            else:
-                try:
-                    supabase.auth.sign_in_with_otp({"email": email})
-                    st.info("✅ Código enviado. Revisá tu email y pegalo en el campo de la derecha.")
-                except Exception as e:
-                    st.error(f"No pudimos enviar el OTP: {e}")
+        if cooldown_active:
+            st.button(f"Enviar código (OTP) — Esperá {remaining}s", disabled=True)
+            st.caption("Evitemos reenvíos seguidos para que el correo no lo marque como spam.")
+        else:
+            if st.button("Enviar código (OTP)"):
+                if not email or "@" not in email:
+                    st.error("Email inválido.")
+                else:
+                    try:
+                        supabase.auth.sign_in_with_otp({"email": email})
+                        st.session_state.otp_last_send = time.time()
+                        st.info("✅ Código enviado. Revisá tu email y pegalo en el campo de la derecha.")
+                        add_log("INFO", f"OTP enviado a {email}")
+                    except Exception as e:
+                        st.error(f"No pudimos enviar el OTP: {e}")
+                        add_log("ERROR", f"Enviar OTP: {e}")
 
     with col2:
         otp = st.text_input("Código OTP", placeholder="123456")
@@ -161,19 +198,25 @@ if page == "Login":
                 st.session_state.session = session
                 st.session_state.user_email = email
                 st.success("¡Listo! Sesión iniciada.")
+                add_log("INFO", f"Login OK: {email}")
+                st.session_state.nav = "Cargar Precio"  # redirige a la siguiente sección útil
                 st.rerun()
             except Exception as e:
                 st.error(f"No pudimos validar el código: {e}")
+                add_log("ERROR", f"Validar OTP: {e}")
 
     if st.session_state.session:
         st.caption(f"Conectado como: {st.session_state.user_email}")
 
-# -------------------- Página Cargar Precio --------------------
+# =========================
+# PÁGINA CARGAR PRECIO
+# =========================
 elif page == "Cargar Precio":
-    st.title("🛒 Registrar precio")
-    if not st.session_state.session:
-        st.warning("Iniciá sesión primero en la sección Login.")
+    # Session guard
+    if not require_auth():
         st.stop()
+
+    st.title("🛒 Registrar precio")
 
     # Ubicación (manual + botón de geolocalización)
     st.subheader("Tu ubicación")
@@ -184,10 +227,7 @@ elif page == "Cargar Precio":
 
     # Botón "Usar mi ubicación"
     try:
-        components.html(
-            open("components/geolocation.html", "r", encoding="utf-8").read(),
-            height=80
-        )
+        components.html(open("components/geolocation.html", "r", encoding="utf-8").read(), height=80)
     except Exception:
         st.caption("Tip: agregá components/geolocation.html para usar el GPS del navegador.")
 
@@ -198,13 +238,11 @@ elif page == "Cargar Precio":
 
     if lat is not None and lon is not None:
         try:
-            res = supabase.rpc(
-                "nearby_stores",
-                {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)}
-            ).execute()
+            res = supabase.rpc("nearby_stores", {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)}).execute()
             nearby_options = res.data or []
-        except Exception:
+        except Exception as e:
             st.info("Aún no hay locales cercanos o hubo un error con la búsqueda.")
+            add_log("ERROR", f"nearby_stores: {e}")
 
     st.subheader("Local")
     if nearby_options:
@@ -234,6 +272,7 @@ elif page == "Cargar Precio":
                         st.success("Local creado.")
                     except Exception as e:
                         st.error(f"No se pudo crear el local: {e}")
+                        add_log("ERROR", f"Insert store: {e}")
 
     st.subheader("Producto y precio")
     product_name_input = st.text_input("Nombre del producto")
@@ -254,17 +293,15 @@ elif page == "Cargar Precio":
         user_id = get_user_id()
         if not user_id:
             st.error("Tu sesión expiró. Iniciá sesión nuevamente.")
-            st.stop()
+            st.session_state.nav = "Login"
+            st.rerun()
 
         # Normalizar nombre antes de guardar/buscar
         product_name = normalize_product(product_name_input)
 
         # Crear producto (optimista) o buscar por UNIQUE(name, currency)
         try:
-            product_res = supabase.table("products").insert({
-                "name": product_name,
-                "currency": currency
-            }).execute()
+            product_res = supabase.table("products").insert({"name": product_name, "currency": currency}).execute()
             product_id = product_res.data[0]["id"]
         except Exception:
             existing = (
@@ -280,6 +317,7 @@ elif page == "Cargar Precio":
                 product_id = existing[0]["id"]
             else:
                 st.error("No se pudo crear ni encontrar el producto.")
+                add_log("ERROR", "Insert/find product failed")
                 st.stop()
 
         # Insertar avistamiento
@@ -295,8 +333,11 @@ elif page == "Cargar Precio":
             st.success("✅ Precio registrado. ¡Gracias por tu aporte!")
         except Exception as e:
             st.error(f"Error al registrar el precio: {e}")
+            add_log("ERROR", f"Insert sighting: {e}")
 
-# -------------------- Página Lista de Precios --------------------
+# =========================
+# PÁGINA LISTA DE PRECIOS
+# =========================
 elif page == "Lista de Precios":
     st.title("📋 Precios cercanos")
     col_lat, col_lon, col_rad = st.columns([1, 1, 1])
@@ -304,22 +345,15 @@ elif page == "Lista de Precios":
     lon_txt = col_lon.text_input("Longitud", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio (km)", 1, 15, 5)
 
-    # Controles UX nuevos: filtro, orden y límite
+    # Filtros y orden
     st.subheader("Filtros y orden")
     filter_text = st.text_input("Filtrar producto", placeholder="Ej.: leche, yerba, arroz")
-    order_by = st.radio(
-        "Ordenar por",
-        ["Fecha (reciente)", "Precio ascendente", "Precio descendente"],
-        horizontal=True
-    )
+    order_by = st.radio("Ordenar por", ["Fecha (reciente)", "Precio ascendente", "Precio descendente"], horizontal=True)
     max_cards = st.number_input("Máximo de tarjetas a mostrar", min_value=10, max_value=200, value=50, step=10)
 
     # Botón "Usar mi ubicación"
     try:
-        components.html(
-            open("components/geolocation.html", "r", encoding="utf-8").read(),
-            height=80
-        )
+        components.html(open("components/geolocation.html", "r", encoding="utf-8").read(), height=80)
     except Exception:
         st.caption("Tip: agregá components/geolocation.html para usar el GPS del navegador.")
 
@@ -331,12 +365,10 @@ elif page == "Lista de Precios":
 
     # 1) Locales cercanos
     try:
-        stores = supabase.rpc(
-            "nearby_stores",
-            {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)}
-        ).execute().data or []
+        stores = supabase.rpc("nearby_stores", {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)}).execute().data or []
     except Exception as e:
         st.error(f"Error buscando locales cercanos: {e}")
+        add_log("ERROR", f"nearby_stores: {e}")
         st.stop()
 
     if not stores:
@@ -365,7 +397,7 @@ elif page == "Lista de Precios":
     for s in sightings:
         grouped[(s['product_id'], s['store_id'])].append(s)
 
-    # 5) Preparar lista de entradas con agregados (latest, count, etc.)
+    # 5) Preparar entradas
     entries = []
     for (pid, sid), items in grouped.items():
         items_sorted = sorted(items, key=lambda x: x['created_at'], reverse=True)
@@ -381,8 +413,7 @@ elif page == "Lista de Precios":
         meters_str = f"{int(store['meters'])} m" if store.get("meters") is not None else ""
 
         entries.append({
-            "pid": pid,
-            "sid": sid,
+            "pid": pid, "sid": sid,
             "display_name": display_name,
             "raw_name": prod['name'],
             "currency": prod['currency'],
@@ -395,14 +426,11 @@ elif page == "Lista de Precios":
             "css_class": css_class
         })
 
-    # 6) Filtro por producto (case-insensitive, usando nombre normalizado y prettify)
+    # 6) Filtro por producto
     if filter_text:
         ft_norm = normalize_product(filter_text)
         ft_lower = filter_text.strip().lower()
-        entries = [
-            e for e in entries
-            if (ft_norm in e["raw_name"]) or (ft_lower in e["display_name"].lower())
-        ]
+        entries = [e for e in entries if (ft_norm in e["raw_name"]) or (ft_lower in e["display_name"].lower())]
 
     # 7) Orden
     if order_by == "Fecha (reciente)":
@@ -412,7 +440,7 @@ elif page == "Lista de Precios":
     else:  # "Precio descendente"
         entries.sort(key=lambda e: (e["currency"], float(e["latest_price"])), reverse=True)
 
-    # 8) Límite de tarjetas
+    # 8) Límite
     entries = entries[:max_cards]
 
     # 9) Render
@@ -429,17 +457,15 @@ elif page == "Lista de Precios":
             </div>
             """, unsafe_allow_html=True)
 
-# -------------------- Página Alertas --------------------
+# =========================
+# PÁGINA ALERTAS
+# =========================
 elif page == "Alertas":
-    st.title("🔔 Alertas de precio")
-    if not st.session_state.session:
-        st.warning("Iniciá sesión primero en la sección Login.")
+    # Session guard
+    if not require_auth():
         st.stop()
 
-    user_id = get_user_id()
-    if not user_id:
-        st.error("Tu sesión expiró. Iniciá sesión nuevamente.")
-        st.stop()
+    st.title("🔔 Alertas de precio")
 
     st.subheader("Crear alerta")
     product_name_input = st.text_input("Producto")
@@ -448,18 +474,9 @@ elif page == "Alertas":
 
     if st.button("Activar alerta"):
         try:
-            # Normalizar antes de buscar/crear
             product_name = normalize_product(product_name_input)
-
             # Buscar o crear producto con nombre normalizado
-            prod_q = (
-                supabase.table("products")
-                .select("id, currency")
-                .eq("name", product_name)
-                .limit(1)
-                .execute()
-                .data
-            )
+            prod_q = supabase.table("products").select("id, currency").eq("name", product_name).limit(1).execute().data
             if not prod_q:
                 prod_ins = supabase.table("products").insert({"name": product_name, "currency": "ARS"}).execute()
                 product_id = prod_ins.data[0]["id"]
@@ -467,7 +484,7 @@ elif page == "Alertas":
                 product_id = prod_q[0]["id"]
 
             supabase.table("alerts").insert({
-                "user_id": user_id,
+                "user_id": get_user_id(),
                 "product_id": product_id,
                 "target_price": float(target_price) if target_price else None,
                 "radius_km": float(radius_km),
@@ -477,13 +494,11 @@ elif page == "Alertas":
             st.success("✅ Alerta creada. Te avisaremos cuando haya precios **validados** más baratos cerca.")
         except Exception as e:
             st.error(f"No pudimos crear la alerta: {e}")
+            add_log("ERROR", f"Insert alert: {e}")
 
     st.subheader("Mis notificaciones")
     try:
-        notes = supabase.table("notifications").select(
-            "id, alert_id, sighting_id, created_at"
-        ).eq("user_id", user_id).order("created_at", desc=True).execute().data
-
+        notes = supabase.table("notifications").select("id, alert_id, sighting_id, created_at").eq("user_id", get_user_id()).order("created_at", desc=True).execute().data
         if not notes:
             st.info("Todavía no hay notificaciones.")
         else:
@@ -491,4 +506,4 @@ elif page == "Alertas":
                 st.write(f"🔔 Notificación #{n['id']} — avistamiento {n['sighting_id']} — {n['created_at']}")
     except Exception as e:
         st.error(f"Error al cargar notificaciones: {e}")
-
+        add_log("ERROR", f"List notifications: {e}")
