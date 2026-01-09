@@ -1,0 +1,91 @@
+
+<!-- components/geolocation.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    .geo-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial;
+    }
+    .geo-btn {
+      background: #4CAF50;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    .geo-btn:hover { background: #45a049; }
+    .geo-status {
+      font-size: 14px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="geo-container">
+    <button class="geo-btn" id="useGeo">Usar mi ubicación</button>
+    <span class="geo-status" id="status">Permite el acceso a tu ubicación.</span>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const parentDoc = window.parent?.document;
+
+    function setInputByPlaceholder(placeholder, value) {
+      if (!parentDoc) return false;
+      const inputs = Array.from(parentDoc.querySelectorAll('input'));
+      const target = inputs.find(i => i.placeholder === placeholder);
+      if (!target) return false;
+      target.value = value;
+      // Notificar cambio al frontend de Streamlit
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    }
+
+    function fillLatLon(lat, lon) {
+      // Usa los placeholders definidos en app.py
+      const okLat = setInputByPlaceholder("-38.7183", lat.toFixed(6));
+      const okLon = setInputByPlaceholder("-62.2663", lon.toFixed(6));
+
+      if (okLat && okLon) {
+        statusEl.textContent = `Ubicación establecida: ${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+      } else {
+        statusEl.textContent = "No se pudieron encontrar los campos de lat/lon. Verificá que estén visibles.";
+      }
+    }
+
+    function onSuccess(pos) {
+      const { latitude, longitude } = pos.coords;
+      fillLatLon(latitude, longitude);
+    }
+
+    function onError(err) {
+      console.warn(err);
+      let msg = "No pudimos obtener tu ubicación.";
+      if (err.code === 1) msg = "Permiso denegado. Permití el acceso al GPS en tu navegador.";
+      else if (err.code === 2) msg = "Posición no disponible. Intentá nuevamente.";
+      else if (err.code === 3) msg = "Tiempo de espera agotado. Intentá nuevamente.";
+      statusEl.textContent = msg;
+    }
+
+    document.getElementById('useGeo').addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        statusEl.textContent = "Tu navegador no soporta geolocalización.";
+        return;
+      }
+      statusEl.textContent = "Obteniendo ubicación…";
+      navigator.geolocation.getCurrentPosition(onSuccess, onError, {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      });
+    });
+  </script>
+</body>
+</html>
