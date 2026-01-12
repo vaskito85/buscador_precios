@@ -1,5 +1,5 @@
-streamlit
-supabase
-python-dotenv
-pandas
-websocket-client
+streamlit==1.52.2
+supabase>=2.6,<3
+python-dotenv>=1.0,<2
+pandas>=2.0,<3
+websocket-client>=1.6,<2
