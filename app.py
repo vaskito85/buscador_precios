@@ -653,4 +653,4 @@ elif page == "Admin":
         except Exception as e:
             st.error(f"No pudimos actualizar los parámetros: {e}")
             st.info("Verificá que tu user_id esté en la tabla public.admins.")
-``
+
