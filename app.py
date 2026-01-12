@@ -5,10 +5,6 @@ from typing import List, Dict
 from collections import defaultdict
 
 import streamlit as st
-# Usamos st.html en lugar de components.html para permitir JS
-# (st.html admite unsafe_allow_javascript=True)
-# Ver docs: https://docs.streamlit.io/ (What's new: JavaScript execution in st.html)
-# y st.query_params para URL params.
 from utils.supabase_client import get_supabase
 from utils.helpers import (
     normalize_product,
@@ -191,25 +187,38 @@ elif page == "Cargar Precio":
     st.title("🛒 Registrar precio")
 
     # --- Prefill desde query params (lat/lon) ---
-    # Si hay 'lat'/'lon' en la URL y aún no inicializamos los inputs, prellenar.
     if "lat" in st.query_params and "lat_txt" not in st.session_state:
         st.session_state["lat_txt"] = st.query_params["lat"]
     if "lon" in st.query_params and "lon_txt" not in st.session_state:
         st.session_state["lon_txt"] = st.query_params["lon"]
 
-    # --- Ubicación (manual + botón de geolocalización) ---
+    # --- Ubicación ---
     st.subheader("Tu ubicación")
     col_lat, col_lon, col_rad = st.columns([1, 1, 1])
     lat_txt = col_lat.text_input("Latitud", key="lat_txt", placeholder="-38.7183")
     lon_txt = col_lon.text_input("Longitud", key="lon_txt", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio de búsqueda de locales (km)", 1, 15, 5)
 
-    # Botón "Usar mi ubicación" (HTML con JS dentro de st.html)
+    # --- Bloque visible "Usar mi ubicación actual" ---
+    st.markdown("**Usar mi ubicación actual**")
+    geo_cols = st.columns([2, 1])
+    # Botón HTML con JS (permite solicitar geolocalización y escribir ?lat/lon)
     try:
         with open("components/geolocation.html", "r", encoding="utf-8") as f:
-            st.html(f.read(), height=110, unsafe_allow_javascript=True)
+            st.html(f.read(), height=150, unsafe_allow_javascript=True)
     except Exception:
         st.caption("Tip: agregá components/geolocation.html para usar el GPS del navegador.")
+
+    # Botón auxiliar de Streamlit: si ya hay ?lat/lon en URL, copiarlos al formulario
+    with geo_cols[1]:
+        if st.button("Copiar lat/lon desde la URL"):
+            if "lat" in st.query_params and "lon" in st.query_params:
+                st.session_state["lat_txt"] = st.query_params["lat"]
+                st.session_state["lon_txt"] = st.query_params["lon"]
+                st.success("Lat/Lon copiados desde la URL.")
+                st.rerun()
+            else:
+                st.info("La URL no tiene parámetros lat/lon todavía.")
 
     # Parseo de coordenadas
     lat = parse_coord(lat_txt)
@@ -272,7 +281,7 @@ elif page == "Cargar Precio":
     price = st.number_input("Precio", min_value=0.0, step=0.01, format="%.2f")
     currency = st.selectbox("Moneda", ["ARS", "USD", "EUR"])
 
-    # --- Botón para limpiar selección/ubicación (UX) ---
+    # --- Botón para limpiar selección/ubicación ---
     col_actions = st.columns(3)
     with col_actions[2]:
         if st.button("Limpiar selección"):
@@ -289,6 +298,7 @@ elif page == "Cargar Precio":
 
     # --- Registrar precio ---
     if st.button("Registrar precio"):
+        # Validaciones mínimas
         if not product_name_input:
             st.error("Ingresá el nombre del producto.")
             st.stop()
@@ -298,7 +308,7 @@ elif page == "Cargar Precio":
             st.error("Seleccioná un local o creá uno nuevo.")
             st.stop()
 
-        # Si faltan lat/lon del usuario, usar coordenadas del local (fallback)
+        # Si faltan lat/lon del usuario, usar coordenadas del local seleccionado (fallback)
         if lat is None or lon is None:
             try:
                 srow = supabase.table("stores").select("id, lat, lon").eq("id", store_choice).single().execute()
@@ -314,6 +324,7 @@ elif page == "Cargar Precio":
             st.session_state.nav = "Login"
             st.rerun()
 
+        # Normalizar nombre
         product_name = normalize_product(product_name_input)
 
         # Upsert producto
@@ -366,7 +377,7 @@ elif page == "Lista de Precios":
     # Botón "Usar mi ubicación" con st.html
     try:
         with open("components/geolocation.html", "r", encoding="utf-8") as f:
-            st.html(f.read(), height=110, unsafe_allow_javascript=True)
+            st.html(f.read(), height=150, unsafe_allow_javascript=True)
     except Exception:
         st.caption("Tip: agregá components/geolocation.html para usar el GPS del navegador.")
 
