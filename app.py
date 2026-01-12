@@ -15,6 +15,80 @@ from utils.helpers import (
 )
 
 # =========================
+# Geolocalización embebida (HTML + JS)
+# =========================
+GEOLOCATION_HTML = """
+<div style="margin: 8px 0;">
+  <button id="geo-btn" style="
+    background:#4CAF50;color:#fff;border:none;border-radius:8px;
+    padding:10px 16px;font-size:16px;cursor:pointer;">
+    📍 Usar mi ubicación actual
+  </button>
+  <span id="geo-status" style="margin-left:10px;color:#888;font-size:14px;"></span>
+</div>
+
+<script>
+(function(){
+  const btn = document.getElementById('geo-btn');
+  const statusEl = document.getElementById('geo-status');
+
+  function setStatus(msg, color='#888') {
+    statusEl.textContent = msg;
+    statusEl.style.color = color;
+  }
+
+  function updateQueryParams(lat, lon) {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('lat', String(lat));
+      url.searchParams.set('lon', String(lon));
+      // Recarga con nuevos params; Streamlit leerá st.query_params
+      window.location.assign(url.toString());
+    } catch (e) {
+      setStatus('Error actualizando la URL', '#d9534f');
+      console.error(e);
+    }
+  }
+
+  function onSuccess(pos) {
+    const { latitude, longitude } = pos.coords;
+    const lat = Number(latitude.toFixed(6));
+    const lon = Number(longitude.toFixed(6));
+    setStatus(`Lat: ${lat}, Lon: ${lon} (OK)`, '#4CAF50');
+    updateQueryParams(lat, lon);
+  }
+
+  function onError(err) {
+    console.warn(err);
+    switch(err.code){
+      case err.PERMISSION_DENIED:
+        setStatus('Permiso denegado. Habilitá el acceso a ubicación.', '#d9534f'); break;
+      case err.POSITION_UNAVAILABLE:
+        setStatus('Posición no disponible.', '#d9534f'); break;
+      case err.TIMEOUT:
+        setStatus('Tiempo excedido obteniendo la ubicación.', '#d9534f'); break;
+      default:
+        setStatus('Error de geolocalización.', '#d9534f');
+    }
+  }
+
+  btn.addEventListener('click', function(){
+    setStatus('Obteniendo ubicación…');
+    if (!navigator.geolocation) {
+      setStatus('Geolocalización no soportada por el navegador.', '#d9534f');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(onSuccess, onError, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0
+    });
+  });
+})();
+</script>
+"""
+
+# =========================
 # Configuración general
 # =========================
 st.set_page_config(page_title="Precios Cercanos", layout="wide")
@@ -40,8 +114,8 @@ st.session_state.setdefault("auth_msg", None)
 SECCIONES = ["Login", "Cargar Precio", "Lista de Precios", "Alertas", "Admin"]
 st.session_state.setdefault("nav", "Login")
 
-# Realtime (estado local)
-st.session_state.setdefault("rt_events", [])   # cola de notificaciones recibidas (para toasts)
+# Realtime (polling local)
+st.session_state.setdefault("rt_events", [])   # cola usada antes (ahora no se usa con polling)
 st.session_state.setdefault("notif_auto", True)
 st.session_state.setdefault("last_notif_id", 0)  # último id procesado (para polling)
 
@@ -173,35 +247,27 @@ elif page == "Cargar Precio":
 
     st.title("🛒 Registrar precio")
 
-    # --- Prefill SIEMPRE desde query params (lat/lon) ---
-    # Si existen en la URL, los copiamos a los inputs sin condicional.
+    # Prefill SIEMPRE desde query params
     if "lat" in st.query_params:
         st.session_state["lat_txt"] = st.query_params["lat"]
     if "lon" in st.query_params:
         st.session_state["lon_txt"] = st.query_params["lon"]
 
-    # --- Ubicación ---
+    # Ubicación
     st.subheader("Tu ubicación")
     col_lat, col_lon, col_rad = st.columns([1, 1, 1])
     lat_txt = col_lat.text_input("Latitud", key="lat_txt", placeholder="-38.7183")
     lon_txt = col_lon.text_input("Longitud", key="lon_txt", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio de búsqueda de locales (km)", 1, 15, 5)
 
-    # Bloque visible "Usar mi ubicación actual"
+    # Botón “Usar mi ubicación” (embebido)
     st.markdown("**Usar mi ubicación actual**")
-    try:
-        # st.html con JS habilitado (no iframed; JS corre en el documento principal)
-        with open("components/geolocation.html", "r", encoding="utf-8") as f:
-            st.html(f.read(), height=160, unsafe_allow_javascript=True)
-    except Exception:
-        st.caption("Tip: agregá components/geolocation.html para usar el GPS del navegador.")
-        add_log("ERROR", "No se pudo leer components/geolocation.html")
+    st.html(GEOLOCATION_HTML, height=170, unsafe_allow_javascript=True)
 
-    # Parseo
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
 
-    # Búsqueda de locales cercanos (si hay lat/lon)
+    # Búsqueda de locales cercanos
     nearby_options: List[Dict] = []
     store_choice = None
     if lat is not None and lon is not None:
@@ -212,7 +278,6 @@ elif page == "Cargar Precio":
             st.info("Aún no hay locales cercanos o hubo un error con la búsqueda.")
             add_log("ERROR", f"nearby_stores: {e}")
 
-    # Selección de local
     st.subheader("Local")
     if nearby_options:
         labels = {s["id"]: f"{s['name']} ({int(s['meters'])} m)" for s in nearby_options}
@@ -222,7 +287,6 @@ elif page == "Cargar Precio":
     else:
         st.info("No encontramos locales cerca de tu ubicación. Podés crear uno nuevo.")
 
-    # Crear local nuevo (siempre visible)
     with st.expander("🧭 Crear local nuevo"):
         new_store_name = st.text_input("Nombre del local")
         new_store_address = st.text_input("Dirección (opcional)")
@@ -243,13 +307,11 @@ elif page == "Cargar Precio":
                     st.error(f"No se pudo crear el local: {e}")
                     add_log("ERROR", f"Insert store: {e}")
 
-    # Producto y precio
     st.subheader("Producto y precio")
     product_name_input = st.text_input("Nombre del producto")
     price = st.number_input("Precio", min_value=0.0, step=0.01, format="%.2f")
     currency = st.selectbox("Moneda", ["ARS", "USD", "EUR"])
 
-    # Limpiar selección / URL params
     col_actions = st.columns(3)
     with col_actions[2]:
         if st.button("Limpiar selección"):
@@ -263,7 +325,6 @@ elif page == "Cargar Precio":
             st.success("Selección limpiada. Volvé a ingresar ubicación/local.")
             st.rerun()
 
-    # Registrar precio
     if st.button("Registrar precio"):
         if not product_name_input:
             st.error("Ingresá el nombre del producto.")
@@ -274,7 +335,6 @@ elif page == "Cargar Precio":
             st.error("Seleccioná un local o creá uno nuevo.")
             st.stop()
 
-        # Fallback: si no hay lat/lon del usuario, usar las del local
         if lat is None or lon is None:
             try:
                 srow = supabase.table("stores").select("id, lat, lon").eq("id", store_choice).single().execute()
@@ -292,7 +352,6 @@ elif page == "Cargar Precio":
 
         product_name = normalize_product(product_name_input)
 
-        # Upsert producto
         try:
             pid_res = supabase.rpc("upsert_product", {"p_name": product_name, "p_currency": currency}).execute()
             product_id = pid_res.data[0]["id"] if pid_res.data else None
@@ -303,17 +362,10 @@ elif page == "Cargar Precio":
             add_log("ERROR", f"upsert_product: {e}")
             st.stop()
 
-        # Insertar avistamiento
         try:
             supabase.table("sightings").insert(
-                {
-                    "user_id": user_id,
-                    "product_id": product_id,
-                    "store_id": store_choice,
-                    "price": float(price),
-                    "lat": float(lat),
-                    "lon": float(lon),
-                }
+                {"user_id": user_id, "product_id": product_id, "store_id": store_choice,
+                 "price": float(price), "lat": float(lat), "lon": float(lon)}
             ).execute()
             st.success("✅ Precio registrado. ¡Gracias por tu aporte!")
         except Exception as e:
@@ -326,7 +378,6 @@ elif page == "Cargar Precio":
 elif page == "Lista de Precios":
     st.title("📋 Precios cercanos")
 
-    # Prefill SIEMPRE desde query params
     if "lat" in st.query_params:
         st.session_state["lat_txt_lp"] = st.query_params["lat"]
     if "lon" in st.query_params:
@@ -337,14 +388,9 @@ elif page == "Lista de Precios":
     lon_txt = col_lon.text_input("Longitud", key="lon_txt_lp", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio (km)", 1, 15, 5)
 
-    # Botón “Usar mi ubicación” (JS)
-    try:
-        with open("components/geolocation.html", "r", encoding="utf-8") as f:
-            st.html(f.read(), height=160, unsafe_allow_javascript=True)
-    except Exception:
-        st.caption("Tip: agregá components/geolocation.html para usar el GPS del navegador.")
+    # Botón “Usar mi ubicación” (embebido)
+    st.html(GEOLOCATION_HTML, height=170, unsafe_allow_javascript=True)
 
-    # Filtros y orden
     st.subheader("Filtros y orden")
     filter_text = st.text_input("Filtrar producto", placeholder="Ej.: leche, yerba, arroz")
     order_by = st.radio("Ordenar por", ["Fecha (reciente)", "Precio ascendente", "Precio descendente"], horizontal=True)
@@ -357,7 +403,6 @@ elif page == "Lista de Precios":
         st.info("Ingresá latitud y longitud para ver precios cercanos.")
         st.stop()
 
-    # 1) Locales cercanos
     try:
         stores = supabase.rpc("nearby_stores", {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)}).execute().data or []
     except Exception as e:
@@ -371,7 +416,6 @@ elif page == "Lista de Precios":
 
     store_ids = [s["id"] for s in stores]
 
-    # 2) Avistamientos
     sightings = supabase.table("sightings").select(
         "id, product_id, store_id, price, created_at, is_validated"
     ).in_("store_id", store_ids).execute().data
@@ -379,18 +423,15 @@ elif page == "Lista de Precios":
         st.info("Aún no hay precios cargados en estos locales.")
         st.stop()
 
-    # 3) Mapear productos y locales
     product_ids = list({s["product_id"] for s in sightings})
     products = supabase.table("products").select("id, name, currency").in_("id", product_ids).execute().data
     prod_map = {p["id"]: {"name": p["name"], "currency": p["currency"]} for p in products}
     store_map = {s["id"]: s for s in stores}
 
-    # 4) Agrupar
     grouped = defaultdict(list)
     for s in sightings:
         grouped[(s["product_id"], s["store_id"])].append(s)
 
-    # 5) Entradas
     entries = []
     for (pid, sid), items in grouped.items():
         items_sorted = sorted(items, key=lambda x: x["created_at"], reverse=True)
@@ -419,13 +460,11 @@ elif page == "Lista de Precios":
             }
         )
 
-    # 6) Filtro
     if filter_text:
         ft_norm = normalize_product(filter_text)
         ft_lower = filter_text.strip().lower()
         entries = [e for e in entries if (ft_norm in e["raw_name"]) or (ft_lower in e["display_name"].lower())]
 
-    # 7) Orden
     if order_by == "Fecha (reciente)":
         entries.sort(key=lambda e: e["latest_date"], reverse=True)
     elif order_by == "Precio ascendente":
@@ -433,10 +472,8 @@ elif page == "Lista de Precios":
     else:
         entries.sort(key=lambda e: (e["currency"], float(e["latest_price"])), reverse=True)
 
-    # 8) Límite
     entries = entries[:max_cards]
 
-    # 9) Render
     if not entries:
         st.info("No hay resultados con los filtros actuales.")
     else:
@@ -461,7 +498,6 @@ elif page == "Alertas":
 
     st.title("🔔 Alertas de precio")
 
-    # Crear alerta
     st.subheader("Crear alerta")
     product_name_input = st.text_input("Producto")
     target_price = st.number_input("Alertarme si el precio es menor o igual a…", min_value=0.0, step=0.01, format="%.2f")
@@ -483,7 +519,6 @@ elif page == "Alertas":
             st.error(f"No pudimos crear la alerta: {e}")
             add_log("ERROR", f"Insert alert: {e}")
 
-    # Mis notificaciones
     st.subheader("Mis notificaciones")
     user_id = get_user_id()
     try:
@@ -500,7 +535,6 @@ elif page == "Alertas":
     st.divider()
     st.subheader("Notificaciones en tiempo real (polling cada 5s)")
 
-    # -------- Polling con fragment (cada 5s) --------
     @st.fragment(run_every="5s")
     def notif_fragment():
         """Consulta periódicamente nuevas notificaciones y muestra toasts."""
@@ -527,7 +561,6 @@ elif page == "Alertas":
     else:
         st.info("⏸️ Auto-actualización pausada. Podés reanudarla cuando quieras.")
 
-    # Controles
     cols_rt = st.columns(3)
     with cols_rt[0]:
         if st.button("Actualizar ahora"):
@@ -567,9 +600,15 @@ elif page == "Admin":
             value=float(current["validation_price_tolerance_pct"] * 100.0), step=0.1
         )
     with col2:
-        win_days = st.number_input("Ventana (días)", min_value=1, max_value=90, value=int(current["validation_window_days"]), step=1)
+        win_days = st.number_input(
+            "Ventana (días)", min_value=1, max_value=90,
+            value=int(current["validation_window_days"]), step=1
+        )
     with col3:
-        min_matches = st.number_input("Mín. coincidencias", min_value=1, max_value=20, value=int(current["validation_min_matches"]), step=1)
+        min_matches = st.number_input(
+            "Mín. coincidencias", min_value=1, max_value=20,
+            value=int(current["validation_min_matches"]), step=1
+        )
 
     st.caption("Para actualizar se requiere permiso de administrador (tabla public.admins).")
 
