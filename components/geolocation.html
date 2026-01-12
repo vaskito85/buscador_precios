@@ -1,91 +1,70 @@
 
 <!-- components/geolocation.html -->
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <style>
-    .geo-container {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial;
-    }
-    .geo-btn {
-      background: #4CAF50;
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      padding: 10px 14px;
-      cursor: pointer;
-      font-size: 16px;
-    }
-    .geo-btn:hover { background: #45a049; }
-    .geo-status {
-      font-size: 14px;
-      color: #666;
-    }
-  </style>
-</head>
-<body>
-  <div class="geo-container">
-    <button class="geo-btn" id="useGeo">Usar mi ubicación</button>
-    <span class="geo-status" id="status">Permite el acceso a tu ubicación.</span>
-  </div>
+<div style="margin: 8px 0;">
+  <button id="geo-btn" style="
+    background:#4CAF50;color:#fff;border:none;border-radius:8px;
+    padding:10px 16px;font-size:16px;cursor:pointer;">
+    📍 Usar mi ubicación
+  </button>
+  <span id="geo-status" style="margin-left:10px;color:#888;font-size:14px;"></span>
+</div>
 
-  <script>
-    const statusEl = document.getElementById('status');
-    const parentDoc = window.parent?.document;
+<script>
+(function(){
+  const btn = document.getElementById('geo-btn');
+  const statusEl = document.getElementById('geo-status');
 
-    function setInputByPlaceholder(placeholder, value) {
-      if (!parentDoc) return false;
-      const inputs = Array.from(parentDoc.querySelectorAll('input'));
-      const target = inputs.find(i => i.placeholder === placeholder);
-      if (!target) return false;
-      target.value = value;
-      // Notificar cambio al frontend de Streamlit
-      target.dispatchEvent(new Event('input', { bubbles: true }));
-      return true;
+  function setStatus(msg, color='#888') {
+    statusEl.textContent = msg;
+    statusEl.style.color = color;
+  }
+
+  function updateQueryParams(lat, lon) {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('lat', String(lat));
+      url.searchParams.set('lon', String(lon));
+      // Recarga con nuevos params; Streamlit leerá st.query_params
+      window.location.replace(url.toString());
+    } catch (e) {
+      setStatus('Error actualizando la URL', '#d9534f');
+      console.error(e);
     }
+  }
 
-    function fillLatLon(lat, lon) {
-      // Usa los placeholders definidos en app.py
-      const okLat = setInputByPlaceholder("-38.7183", lat.toFixed(6));
-      const okLon = setInputByPlaceholder("-62.2663", lon.toFixed(6));
+  function onSuccess(pos) {
+    const { latitude, longitude } = pos.coords;
+    const lat = Number(latitude.toFixed(6));
+    const lon = Number(longitude.toFixed(6));
+    setStatus(`Lat: ${lat}, Lon: ${lon} (OK)`, '#4CAF50');
+    updateQueryParams(lat, lon);
+  }
 
-      if (okLat && okLon) {
-        statusEl.textContent = `Ubicación establecida: ${lat.toFixed(6)}, ${lon.toFixed(6)}`;
-      } else {
-        statusEl.textContent = "No se pudieron encontrar los campos de lat/lon. Verificá que estén visibles.";
-      }
+  function onError(err) {
+    console.warn(err);
+    switch(err.code){
+      case err.PERMISSION_DENIED:
+        setStatus('Permiso denegado. Habilitá el acceso a ubicación.', '#d9534f'); break;
+      case err.POSITION_UNAVAILABLE:
+        setStatus('Posición no disponible.', '#d9534f'); break;
+      case err.TIMEOUT:
+        setStatus('Tiempo excedido obteniendo la ubicación.', '#d9534f'); break;
+      default:
+        setStatus('Error de geolocalización.', '#d9534f');
     }
+  }
 
-    function onSuccess(pos) {
-      const { latitude, longitude } = pos.coords;
-      fillLatLon(latitude, longitude);
+  btn.addEventListener('click', function(){
+    setStatus('Obteniendo ubicación…');
+    if (!navigator.geolocation) {
+      setStatus('Geolocalización no soportada por el navegador.', '#d9534f');
+      return;
     }
-
-    function onError(err) {
-      console.warn(err);
-      let msg = "No pudimos obtener tu ubicación.";
-      if (err.code === 1) msg = "Permiso denegado. Permití el acceso al GPS en tu navegador.";
-      else if (err.code === 2) msg = "Posición no disponible. Intentá nuevamente.";
-      else if (err.code === 3) msg = "Tiempo de espera agotado. Intentá nuevamente.";
-      statusEl.textContent = msg;
-    }
-
-    document.getElementById('useGeo').addEventListener('click', () => {
-      if (!navigator.geolocation) {
-        statusEl.textContent = "Tu navegador no soporta geolocalización.";
-        return;
-      }
-      statusEl.textContent = "Obteniendo ubicación…";
-      navigator.geolocation.getCurrentPosition(onSuccess, onError, {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
-      });
+    navigator.geolocation.getCurrentPosition(onSuccess, onError, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0
     });
-  </script>
-</body>
-</html>
+  });
+})();
+</script>
