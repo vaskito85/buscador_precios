@@ -1,0 +1,11 @@
+
+# .streamlit/config.toml
+[server]
+# Opción recomendada en Streamlit Cloud: desactivar watcher (no usa inotify)
+fileWatcherType = "none"
+
+# Si preferís que la app se recargue sola sin abusar de inotify:
+# fileWatcherType = "poll"
+
+# (Opcional) Excluir carpetas ruidosas por si en el futuro usás poll
+folderWatchBlacklist = ["venv", ".venv", "node_modules", ".git", ".cache"]
