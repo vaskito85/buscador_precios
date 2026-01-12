@@ -4,7 +4,7 @@
   <button id="geo-btn" style="
     background:#4CAF50;color:#fff;border:none;border-radius:8px;
     padding:10px 16px;font-size:16px;cursor:pointer;">
-    📍 Usar mi ubicación
+    📍 Usar mi ubicación actual
   </button>
   <span id="geo-status" style="margin-left:10px;color:#888;font-size:14px;"></span>
 </div>
@@ -25,7 +25,7 @@
       url.searchParams.set('lat', String(lat));
       url.searchParams.set('lon', String(lon));
       // Recarga con nuevos params; Streamlit leerá st.query_params
-      window.location.replace(url.toString());
+      window.location.assign(url.toString());
     } catch (e) {
       setStatus('Error actualizando la URL', '#d9534f');
       console.error(e);
