@@ -36,15 +36,14 @@ st.session_state.setdefault("session", None)
 st.session_state.setdefault("user_email", None)
 st.session_state.setdefault("auth_msg", None)
 
-# Navegación: fuente de verdad (evita el error de key/instanciación)
+# Navegación (fuente de verdad)
 SECCIONES = ["Login", "Cargar Precio", "Lista de Precios", "Alertas", "Admin"]
 st.session_state.setdefault("nav", "Login")
 
-# Realtime
-st.session_state.setdefault("rt_subscribed", False)
-st.session_state.setdefault("rt_channel", None)
-st.session_state.setdefault("rt_events", [])  # cola de eventos entrantes
-st.session_state.setdefault("notif_auto", True)  # controla fragmento en Alertas
+# Realtime (estado local)
+st.session_state.setdefault("rt_events", [])   # cola de notificaciones recibidas (para toasts)
+st.session_state.setdefault("notif_auto", True)
+st.session_state.setdefault("last_notif_id", 0)  # último id procesado (para polling)
 
 # Otros estados
 st.session_state.setdefault("otp_last_send", 0.0)
@@ -85,15 +84,11 @@ def require_auth() -> bool:
 # Sidebar + navegación
 # =========================
 st.sidebar.title("🧭 Navegación")
-
-# Radio SIN key, controlado por index (evita colisión key='nav')
 page = st.sidebar.radio("Secciones", SECCIONES, index=SECCIONES.index(st.session_state["nav"]))
 
-# Mostrar estado de sesión
 if st.session_state.session:
     st.sidebar.success(f"Conectado: {st.session_state.user_email}")
 
-# Cierre de sesión
 if st.sidebar.button("Cerrar sesión"):
     try:
         supabase.auth.sign_out()
@@ -105,7 +100,6 @@ if st.sidebar.button("Cerrar sesión"):
     st.session_state.nav = "Login"
     st.rerun()
 
-# Si el usuario seleccionó manualmente una sección distinta, sincronizar
 if page != st.session_state["nav"]:
     st.session_state["nav"] = page
 
@@ -128,7 +122,6 @@ if page == "Login":
     email = col_email.text_input("Email", placeholder="tu@correo.com")
     otp = col_otp.text_input("Código OTP", placeholder="123456")
 
-    # Cooldown OTP (60s)
     COOLDOWN_SEC = 60
     now = time.time()
     elapsed = now - st.session_state.otp_last_send
@@ -136,8 +129,6 @@ if page == "Login":
     remaining = max(0, int(COOLDOWN_SEC - elapsed))
 
     btn_col = st.columns(2)
-
-    # Enviar OTP
     with btn_col[0]:
         if cooldown_active:
             st.button(f"Enviar código (OTP) — Esperá {remaining}s", disabled=True)
@@ -156,18 +147,14 @@ if page == "Login":
                         st.error(f"No pudimos enviar el OTP: {e}")
                         add_log("ERROR", f"Enviar OTP: {e}")
 
-    # Validar OTP
     with btn_col[1]:
         if st.button("Validar código"):
             try:
-                session = supabase.auth.verify_otp(
-                    {"email": email, "token": otp, "type": "email"}
-                )
+                session = supabase.auth.verify_otp({"email": email, "token": otp, "type": "email"})
                 st.session_state.session = session
                 st.session_state.user_email = email
                 st.success("¡Listo! Sesión iniciada.")
                 add_log("INFO", f"Login OK: {email}")
-                # Navegar programáticamente SIN usar key 'nav' del widget
                 st.session_state["nav"] = "Cargar Precio"
                 st.rerun()
             except Exception as e:
@@ -186,10 +173,11 @@ elif page == "Cargar Precio":
 
     st.title("🛒 Registrar precio")
 
-    # --- Prefill desde query params (lat/lon) ---
-    if "lat" in st.query_params and "lat_txt" not in st.session_state:
+    # --- Prefill SIEMPRE desde query params (lat/lon) ---
+    # Si existen en la URL, los copiamos a los inputs sin condicional.
+    if "lat" in st.query_params:
         st.session_state["lat_txt"] = st.query_params["lat"]
-    if "lon" in st.query_params and "lon_txt" not in st.session_state:
+    if "lon" in st.query_params:
         st.session_state["lon_txt"] = st.query_params["lon"]
 
     # --- Ubicación ---
@@ -199,47 +187,32 @@ elif page == "Cargar Precio":
     lon_txt = col_lon.text_input("Longitud", key="lon_txt", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio de búsqueda de locales (km)", 1, 15, 5)
 
-    # --- Bloque visible "Usar mi ubicación actual" ---
+    # Bloque visible "Usar mi ubicación actual"
     st.markdown("**Usar mi ubicación actual**")
-    geo_cols = st.columns([2, 1])
-    # Botón HTML con JS (permite solicitar geolocalización y escribir ?lat/lon)
     try:
+        # st.html con JS habilitado (no iframed; JS corre en el documento principal)
         with open("components/geolocation.html", "r", encoding="utf-8") as f:
-            st.html(f.read(), height=150, unsafe_allow_javascript=True)
+            st.html(f.read(), height=160, unsafe_allow_javascript=True)
     except Exception:
         st.caption("Tip: agregá components/geolocation.html para usar el GPS del navegador.")
+        add_log("ERROR", "No se pudo leer components/geolocation.html")
 
-    # Botón auxiliar de Streamlit: si ya hay ?lat/lon en URL, copiarlos al formulario
-    with geo_cols[1]:
-        if st.button("Copiar lat/lon desde la URL"):
-            if "lat" in st.query_params and "lon" in st.query_params:
-                st.session_state["lat_txt"] = st.query_params["lat"]
-                st.session_state["lon_txt"] = st.query_params["lon"]
-                st.success("Lat/Lon copiados desde la URL.")
-                st.rerun()
-            else:
-                st.info("La URL no tiene parámetros lat/lon todavía.")
-
-    # Parseo de coordenadas
+    # Parseo
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
 
-    # --- Búsqueda de locales cercanos (si hay lat/lon del usuario) ---
+    # Búsqueda de locales cercanos (si hay lat/lon)
     nearby_options: List[Dict] = []
     store_choice = None
-
     if lat is not None and lon is not None:
         try:
-            res = supabase.rpc(
-                "nearby_stores",
-                {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)},
-            ).execute()
+            res = supabase.rpc("nearby_stores", {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)}).execute()
             nearby_options = res.data or []
         except Exception as e:
             st.info("Aún no hay locales cercanos o hubo un error con la búsqueda.")
             add_log("ERROR", f"nearby_stores: {e}")
 
-    # --- Selección de local ---
+    # Selección de local
     st.subheader("Local")
     if nearby_options:
         labels = {s["id"]: f"{s['name']} ({int(s['meters'])} m)" for s in nearby_options}
@@ -249,7 +222,7 @@ elif page == "Cargar Precio":
     else:
         st.info("No encontramos locales cerca de tu ubicación. Podés crear uno nuevo.")
 
-    # --- Crear local nuevo (siempre disponible) ---
+    # Crear local nuevo (siempre visible)
     with st.expander("🧭 Crear local nuevo"):
         new_store_name = st.text_input("Nombre del local")
         new_store_address = st.text_input("Dirección (opcional)")
@@ -261,12 +234,7 @@ elif page == "Cargar Precio":
             else:
                 try:
                     store_ins = supabase.table("stores").insert(
-                        {
-                            "name": new_store_name,
-                            "address": new_store_address,
-                            "lat": float(lat),
-                            "lon": float(lon),
-                        }
+                        {"name": new_store_name, "address": new_store_address, "lat": float(lat), "lon": float(lon)}
                     ).execute()
                     store_choice = store_ins.data[0]["id"]
                     st.session_state["store_choice"] = store_choice
@@ -275,20 +243,19 @@ elif page == "Cargar Precio":
                     st.error(f"No se pudo crear el local: {e}")
                     add_log("ERROR", f"Insert store: {e}")
 
-    # --- Producto y precio ---
+    # Producto y precio
     st.subheader("Producto y precio")
     product_name_input = st.text_input("Nombre del producto")
     price = st.number_input("Precio", min_value=0.0, step=0.01, format="%.2f")
     currency = st.selectbox("Moneda", ["ARS", "USD", "EUR"])
 
-    # --- Botón para limpiar selección/ubicación ---
+    # Limpiar selección / URL params
     col_actions = st.columns(3)
     with col_actions[2]:
         if st.button("Limpiar selección"):
             for k in ("lat_txt", "lon_txt", "store_choice"):
                 if k in st.session_state:
                     del st.session_state[k]
-            # Limpiar también query params
             try:
                 st.query_params.clear()
             except Exception:
@@ -296,9 +263,8 @@ elif page == "Cargar Precio":
             st.success("Selección limpiada. Volvé a ingresar ubicación/local.")
             st.rerun()
 
-    # --- Registrar precio ---
+    # Registrar precio
     if st.button("Registrar precio"):
-        # Validaciones mínimas
         if not product_name_input:
             st.error("Ingresá el nombre del producto.")
             st.stop()
@@ -308,7 +274,7 @@ elif page == "Cargar Precio":
             st.error("Seleccioná un local o creá uno nuevo.")
             st.stop()
 
-        # Si faltan lat/lon del usuario, usar coordenadas del local seleccionado (fallback)
+        # Fallback: si no hay lat/lon del usuario, usar las del local
         if lat is None or lon is None:
             try:
                 srow = supabase.table("stores").select("id, lat, lon").eq("id", store_choice).single().execute()
@@ -324,14 +290,11 @@ elif page == "Cargar Precio":
             st.session_state.nav = "Login"
             st.rerun()
 
-        # Normalizar nombre
         product_name = normalize_product(product_name_input)
 
         # Upsert producto
         try:
-            pid_res = supabase.rpc(
-                "upsert_product", {"p_name": product_name, "p_currency": currency}
-            ).execute()
+            pid_res = supabase.rpc("upsert_product", {"p_name": product_name, "p_currency": currency}).execute()
             product_id = pid_res.data[0]["id"] if pid_res.data else None
             if not product_id:
                 raise RuntimeError("upsert_product no devolvió id")
@@ -363,10 +326,10 @@ elif page == "Cargar Precio":
 elif page == "Lista de Precios":
     st.title("📋 Precios cercanos")
 
-    # Prefill desde query params (lat/lon) para esta página
-    if "lat" in st.query_params and "lat_txt_lp" not in st.session_state:
+    # Prefill SIEMPRE desde query params
+    if "lat" in st.query_params:
         st.session_state["lat_txt_lp"] = st.query_params["lat"]
-    if "lon" in st.query_params and "lon_txt_lp" not in st.session_state:
+    if "lon" in st.query_params:
         st.session_state["lon_txt_lp"] = st.query_params["lon"]
 
     col_lat, col_lon, col_rad = st.columns([1, 1, 1])
@@ -374,10 +337,10 @@ elif page == "Lista de Precios":
     lon_txt = col_lon.text_input("Longitud", key="lon_txt_lp", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio (km)", 1, 15, 5)
 
-    # Botón "Usar mi ubicación" con st.html
+    # Botón “Usar mi ubicación” (JS)
     try:
         with open("components/geolocation.html", "r", encoding="utf-8") as f:
-            st.html(f.read(), height=150, unsafe_allow_javascript=True)
+            st.html(f.read(), height=160, unsafe_allow_javascript=True)
     except Exception:
         st.caption("Tip: agregá components/geolocation.html para usar el GPS del navegador.")
 
@@ -396,10 +359,7 @@ elif page == "Lista de Precios":
 
     # 1) Locales cercanos
     try:
-        stores = supabase.rpc(
-            "nearby_stores",
-            {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)},
-        ).execute().data or []
+        stores = supabase.rpc("nearby_stores", {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)}).execute().data or []
     except Exception as e:
         st.error(f"Error buscando locales cercanos: {e}")
         add_log("ERROR", f"nearby_stores: {e}")
@@ -463,10 +423,7 @@ elif page == "Lista de Precios":
     if filter_text:
         ft_norm = normalize_product(filter_text)
         ft_lower = filter_text.strip().lower()
-        entries = [
-            e for e in entries
-            if (ft_norm in e["raw_name"]) or (ft_lower in e["display_name"].lower())
-        ]
+        entries = [e for e in entries if (ft_norm in e["raw_name"]) or (ft_lower in e["display_name"].lower())]
 
     # 7) Orden
     if order_by == "Fecha (reciente)":
@@ -496,7 +453,7 @@ Precio: {e['latest_price']} {e['currency']}
             )
 
 # =========================
-# PÁGINA ALERTAS (Realtime)
+# PÁGINA ALERTAS (Polling cada 5s)
 # =========================
 elif page == "Alertas":
     if not require_auth():
@@ -518,13 +475,8 @@ elif page == "Alertas":
             if not product_id:
                 raise RuntimeError("upsert_product no devolvió id")
             supabase.table("alerts").insert(
-                {
-                    "user_id": get_user_id(),
-                    "product_id": product_id,
-                    "target_price": float(target_price) if target_price else None,
-                    "radius_km": float(radius_km),
-                    "active": True,
-                }
+                {"user_id": get_user_id(), "product_id": product_id, "target_price": float(target_price) if target_price else None,
+                 "radius_km": float(radius_km), "active": True}
             ).execute()
             st.success("✅ Alerta creada. Te avisaremos cuando haya precios **validados** más baratos cerca.")
         except Exception as e:
@@ -546,52 +498,36 @@ elif page == "Alertas":
         add_log("ERROR", f"List notifications: {e}")
 
     st.divider()
-    st.subheader("Notificaciones en tiempo real")
+    st.subheader("Notificaciones en tiempo real (polling cada 5s)")
 
-    # ---- Suscripción Realtime (solo aquí) ----
-    def subscribe_notifications(uid: str):
-        if st.session_state.rt_subscribed:
-            return
-        try:
-            ch = supabase.channel(f"notifications_user_{uid}")
-            ch.on(
-                "postgres_changes",
-                {"event": "INSERT", "schema": "public", "table": "notifications", "filter": f"user_id=eq.{uid}"},
-                lambda payload: st.session_state.rt_events.append(payload),
-            )
-            ch.subscribe()
-            st.session_state.rt_channel = ch
-            st.session_state.rt_subscribed = True
-            st.success("🔴 Suscripción en vivo activa. Te avisaremos cuando llegue una nueva notificación.")
-            add_log("INFO", "Realtime subscribed")
-        except Exception as e:
-            st.warning("No pudimos establecer la suscripción en vivo. Usaremos actualización automática cada 5 segundos.")
-            add_log("ERROR", f"Realtime subscribe: {e}")
-
-    subscribe_notifications(user_id)
-
-    # ---- Fragmento auto-actualizable (cada 5s) y controles ----
+    # -------- Polling con fragment (cada 5s) --------
     @st.fragment(run_every="5s")
     def notif_fragment():
-        """Procesa eventos de notificaciones en tiempo real y muestra toasts."""
-        processed = 0
-        while st.session_state.rt_events:
-            payload = st.session_state.rt_events.pop(0)
-            new_row = payload.get("new", {}) if isinstance(payload, dict) else {}
-            nid = new_row.get("id")
-            sid = new_row.get("sighting_id")
-            created = new_row.get("created_at")
-            st.toast(f"🔔 Nueva notificación #{nid} — avistamiento {sid} — {created}", icon="🔔")
-            processed += 1
-        if processed == 0:
-            st.caption("Sin notificaciones nuevas por el momento.")
+        """Consulta periódicamente nuevas notificaciones y muestra toasts."""
+        try:
+            last_id = st.session_state.get("last_notif_id", 0)
+            q = supabase.table("notifications").select("id, sighting_id, created_at").eq("user_id", user_id)
+            if last_id > 0:
+                q = q.gt("id", last_id)
+            rows = q.order("id", desc=False).limit(50).execute().data or []
+            for r in rows:
+                nid = r["id"]
+                sid = r["sighting_id"]
+                created = r["created_at"]
+                st.toast(f"🔔 Nueva notificación #{nid} — avistamiento {sid} — {created}", icon="🔔")
+                if nid > st.session_state["last_notif_id"]:
+                    st.session_state["last_notif_id"] = nid
+            if not rows:
+                st.caption("Sin notificaciones nuevas por el momento.")
+        except Exception as e:
+            st.warning(f"No se pudo consultar notificaciones: {e}")
 
     if st.session_state.notif_auto:
         notif_fragment()
     else:
         st.info("⏸️ Auto-actualización pausada. Podés reanudarla cuando quieras.")
 
-    # Controles del fragmento
+    # Controles
     cols_rt = st.columns(3)
     with cols_rt[0]:
         if st.button("Actualizar ahora"):
@@ -604,20 +540,6 @@ elif page == "Alertas":
         if (not st.session_state.notif_auto) and st.button("Reanudar auto-actualización"):
             st.session_state.notif_auto = True
             st.success("▶️ Auto-actualización reanudada.")
-
-    # Botón para detener la suscripción en vivo
-    cols_stop = st.columns(2)
-    if cols_stop[0].button("Detener suscripción en vivo"):
-        try:
-            if st.session_state.rt_channel:
-                st.session_state.rt_channel.unsubscribe()
-            st.session_state.rt_subscribed = False
-            st.session_state.rt_channel = None
-            st.success("⏹️ Suscripción en vivo detenida.")
-            add_log("INFO", "Realtime unsubscribed")
-        except Exception as e:
-            st.error(f"No pudimos detener la suscripción: {e}")
-            add_log("ERROR", f"Realtime unsubscribe: {e}")
 
 # =========================
 # PÁGINA ADMIN (Settings)
@@ -645,15 +567,9 @@ elif page == "Admin":
             value=float(current["validation_price_tolerance_pct"] * 100.0), step=0.1
         )
     with col2:
-        win_days = st.number_input(
-            "Ventana (días)", min_value=1, max_value=90,
-            value=int(current["validation_window_days"]), step=1
-        )
+        win_days = st.number_input("Ventana (días)", min_value=1, max_value=90, value=int(current["validation_window_days"]), step=1)
     with col3:
-        min_matches = st.number_input(
-            "Mín. coincidencias", min_value=1, max_value=20,
-            value=int(current["validation_min_matches"]), step=1
-        )
+        min_matches = st.number_input("Mín. coincidencias", min_value=1, max_value=20, value=int(current["validation_min_matches"]), step=1)
 
     st.caption("Para actualizar se requiere permiso de administrador (tabla public.admins).")
 
@@ -661,11 +577,7 @@ elif page == "Admin":
         try:
             supabase.rpc(
                 "update_settings",
-                {
-                    "p_tolerance": float(tol_pct) / 100.0,
-                    "p_window_days": int(win_days),
-                    "p_min_matches": int(min_matches),
-                },
+                {"p_tolerance": float(tol_pct) / 100.0, "p_window_days": int(win_days), "p_min_matches": int(min_matches)},
             ).execute()
             st.success("✅ Parámetros actualizados.")
         except Exception as e:
