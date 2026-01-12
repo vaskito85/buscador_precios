@@ -4,3 +4,4 @@ python-dotenv
 pandas
 websocket-client
 requests
+streamlit-geolocation
