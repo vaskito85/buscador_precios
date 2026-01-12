@@ -17,6 +17,8 @@ from utils.helpers import (
 # =========================
 # Geolocalización embebida (HTML + JS)
 # =========================
+# 👉 Este HTML NO recarga la página: actualiza directamente los inputs "Latitud" y "Longitud"
+#    y dispara un evento 'input' para que Streamlit haga rerun SIN perder la sesión.
 GEOLOCATION_HTML = """
 <div style="margin: 8px 0;">
   <button id="geo-btn" style="
@@ -37,16 +39,21 @@ GEOLOCATION_HTML = """
     statusEl.style.color = color;
   }
 
-  function updateQueryParams(lat, lon) {
+  function setInputValue(label, value) {
     try {
-      const url = new URL(window.location.href);
-      url.searchParams.set('lat', String(lat));
-      url.searchParams.set('lon', String(lon));
-      // Recarga con nuevos params; Streamlit leerá st.query_params
-      window.location.assign(url.toString());
+      const selector = `input[aria-label="${label}"]`;
+      const el = document.querySelector(selector);
+      if (!el) {
+        setStatus(`No se encontró el campo: ${label}`, '#d9534f');
+        return;
+      }
+      el.value = value;
+      // Disparar evento 'input' para que Streamlit capte el cambio y haga rerun
+      const evt = new Event('input', { bubbles: true });
+      el.dispatchEvent(evt);
     } catch (e) {
-      setStatus('Error actualizando la URL', '#d9534f');
       console.error(e);
+      setStatus('Error escribiendo en los campos', '#d9534f');
     }
   }
 
@@ -55,7 +62,9 @@ GEOLOCATION_HTML = """
     const lat = Number(latitude.toFixed(6));
     const lon = Number(longitude.toFixed(6));
     setStatus(`Lat: ${lat}, Lon: ${lon} (OK)`, '#4CAF50');
-    updateQueryParams(lat, lon);
+    // 👉 Escribir directamente en los inputs de Streamlit (sin recargar)
+    setInputValue("Latitud", String(lat));
+    setInputValue("Longitud", String(lon));
   }
 
   function onError(err) {
@@ -115,13 +124,10 @@ SECCIONES = ["Login", "Cargar Precio", "Lista de Precios", "Alertas", "Admin"]
 st.session_state.setdefault("nav", "Login")
 
 # Realtime (polling local)
-st.session_state.setdefault("rt_events", [])     # (no usado con polling)
 st.session_state.setdefault("notif_auto", True)
 st.session_state.setdefault("last_notif_id", 0)  # último id procesado (para polling)
-
-# Otros estados
-st.session_state.setdefault("otp_last_send", 0.0)
 st.session_state.setdefault("logs", [])
+st.session_state.setdefault("otp_last_send", 0.0)
 
 # =========================
 # Mini logging (sidebar)
@@ -247,7 +253,7 @@ elif page == "Cargar Precio":
 
     st.title("🛒 Registrar precio")
 
-    # Prefill SIEMPRE desde query params
+    # Prefill SIEMPRE desde query params (si existen)
     if "lat" in st.query_params:
         st.session_state["lat_txt"] = st.query_params["lat"]
     if "lon" in st.query_params:
@@ -260,19 +266,31 @@ elif page == "Cargar Precio":
     lon_txt = col_lon.text_input("Longitud", key="lon_txt", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio de búsqueda de locales (km)", 1, 15, 5)
 
-    # Botón “Usar mi ubicación” (embebido)
+    # Botón “Usar mi ubicación” (embebido, sin recarga)
     st.markdown("**Usar mi ubicación actual**")
-    st.html(GEOLOCATION_HTML, unsafe_allow_javascript=True)  # ← sin height
+    st.html(GEOLOCATION_HTML, unsafe_allow_javascript=True)
 
+    # Parseo
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
+
+    # 👉 Sin recarga: si ya tenemos lat/lon válidos, reflejamos en la URL (st.query_params)
+    #    Esto NO reinicia la app y mantiene sesión.
+    try:
+        if lat is not None and lon is not None:
+            st.query_params.lat = str(lat)
+            st.query_params.lon = str(lon)
+    except Exception:
+        pass
 
     # Búsqueda de locales cercanos
     nearby_options: List[Dict] = []
     store_choice = None
     if lat is not None and lon is not None:
         try:
-            res = supabase.rpc("nearby_stores", {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)}).execute()
+            res = supabase.rpc(
+                "nearby_stores", {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)}
+            ).execute()
             nearby_options = res.data or []
         except Exception as e:
             st.info("Aún no hay locales cercanos o hubo un error con la búsqueda.")
@@ -378,6 +396,7 @@ elif page == "Cargar Precio":
 elif page == "Lista de Precios":
     st.title("📋 Precios cercanos")
 
+    # Prefill SIEMPRE desde query params (si existen)
     if "lat" in st.query_params:
         st.session_state["lat_txt_lp"] = st.query_params["lat"]
     if "lon" in st.query_params:
@@ -388,9 +407,10 @@ elif page == "Lista de Precios":
     lon_txt = col_lon.text_input("Longitud", key="lon_txt_lp", placeholder="-62.2663")
     radius_km = col_rad.slider("Radio (km)", 1, 15, 5)
 
-    # Botón “Usar mi ubicación” (embebido)
-    st.html(GEOLOCATION_HTML, unsafe_allow_javascript=True)  # ← sin height
+    # Botón “Usar mi ubicación” (embebido, sin recarga)
+    st.html(GEOLOCATION_HTML, unsafe_allow_javascript=True)
 
+    # Filtros y orden
     st.subheader("Filtros y orden")
     filter_text = st.text_input("Filtrar producto", placeholder="Ej.: leche, yerba, arroz")
     order_by = st.radio("Ordenar por", ["Fecha (reciente)", "Precio ascendente", "Precio descendente"], horizontal=True)
@@ -399,12 +419,22 @@ elif page == "Lista de Precios":
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
 
+    # Sin recarga: reflejar en URL si hay lat/lon
+    try:
+        if lat is not None and lon is not None:
+            st.query_params.lat = str(lat)
+            st.query_params.lon = str(lon)
+    except Exception:
+        pass
+
     if lat is None or lon is None:
         st.info("Ingresá latitud y longitud para ver precios cercanos.")
         st.stop()
 
     try:
-        stores = supabase.rpc("nearby_stores", {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)}).execute().data or []
+        stores = supabase.rpc(
+            "nearby_stores", {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_km)}
+        ).execute().data or []
     except Exception as e:
         st.error(f"Error buscando locales cercanos: {e}")
         add_log("ERROR", f"nearby_stores: {e}")
@@ -623,3 +653,4 @@ elif page == "Admin":
         except Exception as e:
             st.error(f"No pudimos actualizar los parámetros: {e}")
             st.info("Verificá que tu user_id esté en la tabla public.admins.")
+``
