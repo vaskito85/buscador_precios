@@ -115,7 +115,7 @@ SECCIONES = ["Login", "Cargar Precio", "Lista de Precios", "Alertas", "Admin"]
 st.session_state.setdefault("nav", "Login")
 
 # Realtime (polling local)
-st.session_state.setdefault("rt_events", [])   # cola usada antes (ahora no se usa con polling)
+st.session_state.setdefault("rt_events", [])     # (no usado con polling)
 st.session_state.setdefault("notif_auto", True)
 st.session_state.setdefault("last_notif_id", 0)  # último id procesado (para polling)
 
@@ -262,7 +262,7 @@ elif page == "Cargar Precio":
 
     # Botón “Usar mi ubicación” (embebido)
     st.markdown("**Usar mi ubicación actual**")
-    st.html(GEOLOCATION_HTML, height=170, unsafe_allow_javascript=True)
+    st.html(GEOLOCATION_HTML, unsafe_allow_javascript=True)  # ← sin height
 
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
@@ -389,7 +389,7 @@ elif page == "Lista de Precios":
     radius_km = col_rad.slider("Radio (km)", 1, 15, 5)
 
     # Botón “Usar mi ubicación” (embebido)
-    st.html(GEOLOCATION_HTML, height=170, unsafe_allow_javascript=True)
+    st.html(GEOLOCATION_HTML, unsafe_allow_javascript=True)  # ← sin height
 
     st.subheader("Filtros y orden")
     filter_text = st.text_input("Filtrar producto", placeholder="Ej.: leche, yerba, arroz")
@@ -511,7 +511,8 @@ elif page == "Alertas":
             if not product_id:
                 raise RuntimeError("upsert_product no devolvió id")
             supabase.table("alerts").insert(
-                {"user_id": get_user_id(), "product_id": product_id, "target_price": float(target_price) if target_price else None,
+                {"user_id": get_user_id(), "product_id": product_id,
+                 "target_price": float(target_price) if target_price else None,
                  "radius_km": float(radius_km), "active": True}
             ).execute()
             st.success("✅ Alerta creada. Te avisaremos cuando haya precios **validados** más baratos cerca.")
