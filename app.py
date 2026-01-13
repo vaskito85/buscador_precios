@@ -45,13 +45,13 @@ supabase = get_supabase()
 # =========================
 # Estado de sesión (inicial)
 # =========================
-st.session_state.setdefault("session", None)
+st. session_state.setdefault("session", None)
 st.session_state.setdefault("user_email", None)
 st.session_state.setdefault("auth_msg", None)
 
 # Navegación
 SECCIONES_BASE = ["Login", "Cargar Precio", "Lista de Precios", "Alertas", "🗺️ Explorador de Comercios", "Locales"]
-st.session_state. setdefault("nav", "Login")
+st.session_state.setdefault("nav", "Login")
 
 # Realtime (polling local)
 st.session_state.setdefault("notif_auto", True)
@@ -81,11 +81,22 @@ def is_admin() -> bool:
 
 def require_auth() -> bool:
     if not (st.session_state.session and get_user_id()):
-        st.session_state.auth_msg = "Tu sesión no está activa.  Iniciá sesión para continuar."
+        st.session_state.auth_msg = "Tu sesión no está activa. Iniciá sesión para continuar."
         st.session_state.nav = "Login"
         st.rerun()
         return False
     return True
+
+def sync_location_to_query_params(lat_txt: str, lon_txt: str):
+    """Sincroniza lat/lon a query_params para que se mantengan entre secciones"""
+    try:
+        lat = parse_coord(lat_txt)
+        lon = parse_coord(lon_txt)
+        if lat is not None and lon is not None: 
+            st.query_params.lat = str(lat)
+            st.query_params.lon = str(lon)
+    except Exception: 
+        pass
 
 # =========================
 # Sidebar + navegación
@@ -104,7 +115,7 @@ if st.session_state.session:
             add_log("ERROR", f"Sign out:  {e}")
         st.session_state.session = None
         st.session_state.user_email = None
-        st.session_state.nav = "Login"
+        st. session_state.nav = "Login"
         st.rerun()
 
 # Modo debug solo si sos admin
@@ -117,7 +128,7 @@ if is_admin():
             st.write("Session keys:", list(st.session_state.keys()))
             st.write("is_admin():", is_admin())
             st.write("session_state.debug:", st.session_state.debug)
-        
+
         if st.sidebar.button("🔧 Probar GPS (debug)", key="test_gps_debug"):
             st.sidebar.info("Probando get_geolocation()...")
             try:
@@ -129,7 +140,7 @@ if is_admin():
                 st.sidebar.success("Prueba completada")
             except Exception as e: 
                 st.sidebar.error(f"❌ Debug GPS error: {e}")
-        
+
         if st.session_state.logs:
             with st.sidebar.expander("📋 Logs recientes", expanded=False):
                 for entry in reversed(st.session_state.logs[-30:]):
@@ -182,7 +193,7 @@ if page == "Login":
                 try:
                     supabase.auth.sign_in_with_otp({"email": email})
                     st.session_state.otp_last_send = time. time()
-                    st.info("✅ Código enviado.  Revisá tu email.")
+                    st.info("✅ Código enviado. Revisá tu email.")
                     add_log("INFO", f"OTP enviado a {email}")
                 except Exception as e:
                     st.error(f"No pudimos enviar el OTP:  {e}")
@@ -198,7 +209,7 @@ if page == "Login":
             st.session_state["nav"] = "Cargar Precio"
             st.rerun()
         except Exception as e:
-            st. error(f"No pudimos validar el código: {e}")
+            st.error(f"No pudimos validar el código: {e}")
             add_log("ERROR", f"Validar OTP: {e}")
 
 # =========================
@@ -210,15 +221,16 @@ elif page == "Cargar Precio":
 
     st.title("🛒 Registrar precio")
 
+    # Prefill desde query_params
     if "lat" in st. query_params:
-        st.session_state["lat_txt"] = st.query_params["lat"]
+        st.session_state["lat_txt"] = str(st.query_params["lat"])
     if "lon" in st.query_params:
-        st.session_state["lon_txt"] = st.query_params["lon"]
+        st.session_state["lon_txt"] = str(st.query_params["lon"])
 
     st.subheader("Tu ubicación")
     col_lat, col_lon, col_unit, col_rad = st.columns([1, 1, 0.8, 1.2])
-    lat_txt = col_lat.text_input("Latitud", key="lat_txt", placeholder="-38.7183")
-    lon_txt = col_lon.text_input("Longitud", key="lon_txt", placeholder="-62.2663")
+    lat_txt = col_lat.text_input("Latitud", key="lat_txt", placeholder="-38.7183", value=st.session_state. get("lat_txt", ""))
+    lon_txt = col_lon.text_input("Longitud", key="lon_txt", placeholder="-62.2663", value=st.session_state.get("lon_txt", ""))
     unit = col_unit.selectbox("Unidad de radio", ["Kilómetros", "Metros"], index=0)
     if unit == "Kilómetros":
         radius_value = col_rad.slider("Radio (km)", 1, 15, 5)
@@ -234,6 +246,9 @@ elif page == "Cargar Precio":
 
     with col_info:
         st.caption("Haz clic para obtener tu ubicación automáticamente del navegador.")
+
+    # Sincronizar a query_params
+    sync_location_to_query_params(lat_txt, lon_txt)
 
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
@@ -254,35 +269,37 @@ elif page == "Cargar Precio":
     st.subheader("Local")
 
     OSM_CATEGORIES = {
-        "Supermercados": ("shop", "supermarket"),
-        "Almacenes": ("shop", "convenience"),
-        "Farmacias":  ("amenity", "pharmacy"),
-        "Verdulerías": ("shop", "greengrocer"),
-        "Panaderías": ("shop", "bakery"),
-        "Kioscos": ("shop", "kiosk"),
-        "Carnicerías": ("shop", "butcher"),
-        "Librerías": ("shop", "books"),
-        "Ferreterías": ("shop", "hardware"),
+        "🏪 Supermercados": ("shop", "supermarket"),
+        "🏬 Almacenes": ("shop", "convenience"),
+        "💊 Farmacias": ("amenity", "pharmacy"),
+        "🥕 Verdulerías": ("shop", "greengrocer"),
+        "🍞 Panaderías": ("shop", "bakery"),
+        "🛍️ Kioscos": ("shop", "kiosk"),
+        "🥩 Carnicerías": ("shop", "butcher"),
+        "📚 Librerías": ("shop", "books"),
+        "🔨 Ferreterías": ("shop", "hardware"),
     }
 
-    with st.expander("🔍 Sugerencias cercanas (Google/OSM)", expanded=False):
-        kw = st.text_input("Filtro (Google) opcional, ej.:  'supermercado'")
-        t = st.text_input("Tipo (Google) opcional, ej.: 'supermarket'")
-        osm_choice = st.selectbox("Categoría OSM", list(OSM_CATEGORIES.keys()))
-        adv_col = st.checkbox("Modo avanzado (key/value OSM)", value=False)
+    with st.expander("🔍 Sugerencias cercanas (OSM/Google)", expanded=False):
+        osm_choice = st.selectbox("Categoría", list(OSM_CATEGORIES. keys()), key="osm_choice_cargar")
+        adv_col = st.checkbox("Modo avanzado (key/value OSM)", value=False, key="adv_cargar")
         if adv_col: 
-            key_adv = st.text_input("OSM key (ej.  shop/amenity)", value="shop")
-            val_adv = st.text_input("OSM value (ej. supermarket)", value="supermarket")
+            key_adv = st.text_input("OSM key (ej.  shop/amenity)", value="shop", key="key_adv_cargar")
+            val_adv = st.text_input("OSM value (ej. supermarket)", value="supermarket", key="val_adv_cargar")
         else:
             key_adv, val_adv = OSM_CATEGORIES[osm_choice]
 
-        if st.button("Buscar locales cercanos"):
-            if lat is None or lon is None:
+        if st.button("Buscar locales cercanos", key="btn_search_cargar"):
+            if lat is None or lon is None: 
                 st.error("Definí latitud/longitud (GPS o manual).")
             else:
-                g_places = places_nearby_google(lat, lon, radius_m, keyword=kw or None, place_type=t or None)
-                if not g_places:
-                    g_places = places_nearby_osm(lat, lon, radius_m, key=key_adv, value=val_adv)
+                # Primero intenta OSM
+                g_places = places_nearby_osm(lat, lon, radius_m, key=key_adv, value=val_adv)
+                
+                # Si no encuentra, intenta Google
+                if not g_places: 
+                    g_places = places_nearby_google(lat, lon, radius_m, place_type=val_adv)
+                
                 if not g_places:
                     st.info("No se encontraron sugerencias.")
                 else:
@@ -309,25 +326,25 @@ elif page == "Cargar Precio":
     else:
         st.info("No encontramos locales cerca de tu ubicación.  Podés crear uno nuevo.")
         tabs = st.tabs(["📍 Por dirección", "➕ Crear manual (lat/lon)"])
-        with tabs[0]:
+        with tabs[0]: 
             new_store_name_a = st.text_input("Nombre del local", key="new_store_name_a")
             new_store_address_a = st.text_input("Dirección", key="new_store_address_a", placeholder="Calle y número, ciudad")
             if st.button("Buscar coordenadas y guardar"):
-                if not new_store_name_a or not new_store_address_a: 
+                if not new_store_name_a or not new_store_address_a:
                     st.error("Ingresá nombre y dirección.")
                 else:
-                    g_lat, g_lon = geocode_address_google(new_store_address_a)
+                    g_lat, g_lon = geocode_address_osm(new_store_address_a)
                     if not g_lat or not g_lon:
-                        g_lat, g_lon = geocode_address_osm(new_store_address_a)
+                        g_lat, g_lon = geocode_address_google(new_store_address_a)
                     if g_lat is None or g_lon is None:
                         st.error("No se pudo geocodificar la dirección (sin resultados).")
                     else:
                         try:
                             ins = supabase.rpc(
                                 "insert_store",
-                                {"p_name":  new_store_name_a, "p_address": new_store_address_a, "p_lat": float(g_lat), "p_lon": float(g_lon)}
+                                {"p_name": new_store_name_a, "p_address": new_store_address_a, "p_lat": float(g_lat), "p_lon": float(g_lon)}
                             ).execute()
-                            store_choice = (ins.data or [{}])[0].get("id")
+                            store_choice = (ins. data or [{}])[0].get("id")
                             st.session_state["store_choice"] = store_choice
                             st.success(f"Local creado y seleccionado (lat={g_lat}, lon={g_lon}).")
                         except Exception as e:
@@ -346,7 +363,7 @@ elif page == "Cargar Precio":
                     lat_n = parse_coord(lat_new)
                     lon_n = parse_coord(lon_new)
                     if lat_n is None or lon_n is None:
-                        st.error("Ingresá latitud y longitud válidas.")
+                        st. error("Ingresá latitud y longitud válidas.")
                     else:
                         try:
                             ins = supabase.rpc(
@@ -356,8 +373,8 @@ elif page == "Cargar Precio":
                             store_choice = (ins.data or [{}])[0].get("id")
                             st. session_state["store_choice"] = store_choice
                             st.success("Local creado y seleccionado.")
-                        except Exception as e:
-                            st.error(f"No se pudo crear el local: {e}")
+                        except Exception as e: 
+                            st.error(f"No se pudo crear el local:  {e}")
                             add_log("ERROR", f"Insert store (manual): {e}")
 
     st.subheader("Producto y precio")
@@ -377,7 +394,7 @@ elif page == "Cargar Precio":
             st.error("Seleccioná un local o creá uno nuevo.")
             st.stop()
 
-        lat = parse_coord(st.session_state. get("lat_txt", ""))
+        lat = parse_coord(st.session_state.get("lat_txt", ""))
         lon = parse_coord(st.session_state.get("lon_txt", ""))
 
         if lat is None or lon is None: 
@@ -392,7 +409,7 @@ elif page == "Cargar Precio":
         user_id = get_user_id()
         if not user_id:
             st.error("Tu sesión expiró. Iniciá sesión nuevamente.")
-            st.session_state.nav = "Login"
+            st.session_state. nav = "Login"
             st.rerun()
 
         product_name = normalize_product(product_name_input)
@@ -419,7 +436,7 @@ elif page == "Cargar Precio":
                 }
             ).execute()
             st.success("✅ Precio registrado.  ¡Gracias por tu aporte!")
-        except Exception as e: 
+        except Exception as e:
             st.error(f"Error al registrar el precio: {e}")
             add_log("ERROR", f"Insert sighting: {e}")
 
@@ -429,14 +446,15 @@ elif page == "Cargar Precio":
 elif page == "Lista de Precios":
     st.title("📋 Precios cercanos")
 
+    # Prefill desde query_params
     if "lat" in st.query_params:
-        st.session_state["lat_txt_lp"] = st.query_params["lat"]
+        st.session_state["lat_txt_lp"] = str(st.query_params["lat"])
     if "lon" in st.query_params:
-        st.session_state["lon_txt_lp"] = st.query_params["lon"]
+        st.session_state["lon_txt_lp"] = str(st.query_params["lon"])
 
-    col_lat, col_lon, col_unit, col_rad = st. columns([1, 1, 0.8, 1.2])
-    lat_txt = col_lat.text_input("Latitud", key="lat_txt_lp", placeholder="-38.7183")
-    lon_txt = col_lon.text_input("Longitud", key="lon_txt_lp", placeholder="-62.2663")
+    col_lat, col_lon, col_unit, col_rad = st.columns([1, 1, 0.8, 1.2])
+    lat_txt = col_lat.text_input("Latitud", key="lat_txt_lp", placeholder="-38.7183", value=st.session_state. get("lat_txt_lp", ""))
+    lon_txt = col_lon.text_input("Longitud", key="lon_txt_lp", placeholder="-62.2663", value=st.session_state.get("lon_txt_lp", ""))
     unit = col_unit.selectbox("Unidad de radio", ["Kilómetros", "Metros"], index=0, key="unit_lp")
     if unit == "Kilómetros":
         radius_value = col_rad.slider("Radio (km)", 1, 15, 5, key="rad_km_lp")
@@ -445,12 +463,15 @@ elif page == "Lista de Precios":
         radius_value = col_rad.slider("Radio (m)", 50, 500, 200, step=50, key="rad_m_lp")
         radius_m = int(radius_value)
 
-    col_gps, col_info = st. columns([2, 3])
-    with col_gps: 
+    col_gps, col_info = st.columns([2, 3])
+    with col_gps:
         if st.button("📍 Usar mi ubicación actual (GPS)", key="gps_lp", use_container_width=True):
             set_location_from_gps("lat_txt_lp", "lon_txt_lp")
     with col_info:
         st.caption("Haz clic para obtener tu ubicación automáticamente del navegador.")
+
+    # Sincronizar a query_params
+    sync_location_to_query_params(lat_txt, lon_txt)
 
     st.subheader("Filtros y orden")
     filter_text = st.text_input("Filtrar producto", placeholder="Ej.:  leche, yerba, arroz")
@@ -459,13 +480,6 @@ elif page == "Lista de Precios":
 
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
-
-    try:
-        if lat is not None and lon is not None: 
-            st.query_params. lat = str(lat)
-            st.query_params.lon = str(lon)
-    except Exception: 
-        pass
 
     if lat is None or lon is None: 
         st.info("Ingresá latitud y longitud para ver precios cercanos (podés usar el botón 📍).")
@@ -510,9 +524,9 @@ elif page == "Lista de Precios":
         label = confidence_label(count)
         css_class = confidence_class(count)
         prod = prod_map. get(pid, {"name": f"producto {pid}", "currency": "ARS"})
-        store = store_map.get(sid, {"name": f"Local {sid}", "meters": None})
+        store = store_map. get(sid, {"name": f"Local {sid}", "meters": None})
         display_name = prettify_product(prod["name"])
-        meters_str = f"{int(store['meters'])} m" if store. get("meters") is not None else ""
+        meters_str = f"{int(store['meters'])} m" if store.get("meters") is not None else ""
         entries.append({
             "pid": pid, "sid": sid, "display_name": display_name, "raw_name": prod["name"],
             "currency": prod["currency"], "store_name": store["name"], "meters_str": meters_str,
@@ -554,10 +568,16 @@ elif page == "🗺️ Explorador de Comercios":
     st.title("🗺️ Explorador de Comercios Cercanos")
     st.markdown("Descubre comercios cercanos a tu ubicación sin necesidad de cargarlos primero.")
 
+    # Prefill desde query_params
+    if "lat" in st.query_params:
+        st.session_state["lat_txt_explorer"] = str(st.query_params["lat"])
+    if "lon" in st.query_params:
+        st.session_state["lon_txt_explorer"] = str(st. query_params["lon"])
+
     st.subheader("Tu ubicación")
-    col_lat, col_lon, col_unit, col_rad = st. columns([1, 1, 0.8, 1.2])
-    lat_txt = col_lat.text_input("Latitud", key="lat_txt_explorer", placeholder="-38.7183")
-    lon_txt = col_lon.text_input("Longitud", key="lon_txt_explorer", placeholder="-62.2663")
+    col_lat, col_lon, col_unit, col_rad = st.columns([1, 1, 0.8, 1.2])
+    lat_txt = col_lat.text_input("Latitud", key="lat_txt_explorer", placeholder="-38.7183", value=st.session_state. get("lat_txt_explorer", ""))
+    lon_txt = col_lon.text_input("Longitud", key="lon_txt_explorer", placeholder="-62.2663", value=st. session_state.get("lon_txt_explorer", ""))
     unit = col_unit.selectbox("Unidad de radio", ["Kilómetros", "Metros"], index=0, key="unit_explorer")
     if unit == "Kilómetros":
         radius_value = col_rad.slider("Radio (km)", 1, 15, 5, key="rad_km_explorer")
@@ -570,8 +590,11 @@ elif page == "🗺️ Explorador de Comercios":
     with col_gps:
         if st.button("📍 Usar mi ubicación actual (GPS)", key="gps_explorer", use_container_width=True):
             set_location_from_gps("lat_txt_explorer", "lon_txt_explorer")
-    with col_info: 
+    with col_info:
         st.caption("Haz clic para obtener tu ubicación automáticamente del navegador.")
+
+    # Sincronizar a query_params
+    sync_location_to_query_params(lat_txt, lon_txt)
 
     st.subheader("Tipo de comercio")
     COMMERCE_TYPES = {
@@ -589,7 +612,7 @@ elif page == "🗺️ Explorador de Comercios":
         "💄 Peluquerías": ("shop", "hairdresser"),
     }
 
-    commerce_choice = st.selectbox("Selecciona el tipo de comercio:", list(COMMERCE_TYPES.keys()))
+    commerce_choice = st.selectbox("Selecciona el tipo de comercio:", list(COMMERCE_TYPES. keys()), key="commerce_selector")
     key_type, val_type = COMMERCE_TYPES[commerce_choice]
 
     if st.button("🔍 Buscar comercios cercanos", use_container_width=True):
@@ -599,26 +622,29 @@ elif page == "🗺️ Explorador de Comercios":
         if lat is None or lon is None: 
             st.error("❌ Por favor, ingresa tu ubicación (latitud y longitud).")
         else:
-            st.info(f"🔍 Buscando {commerce_choice. lower()} en un radio de {radius_m/1000:.1f} km...")
+            st.info(f"🔍 Buscando {commerce_choice. lower()} en un radio de {radius_m/1000:. 1f} km...")
 
-            places = places_nearby_google(lat, lon, radius_m, keyword=commerce_choice. split()[-1], place_type=val_type)
-            
+            # Primero intenta OSM
+            places = places_nearby_osm(lat, lon, radius_m, key=key_type, value=val_type)
+
+            # Si no encuentra, intenta Google
             if not places:
-                places = places_nearby_osm(lat, lon, radius_m, key=key_type, value=val_type)
+                places = places_nearby_google(lat, lon, radius_m, place_type=val_type)
 
             if not places:
-                st.warning(f"⚠️ No se encontraron {commerce_choice.lower()} cercanos en esta área.")
+                st.warning(f"⚠️ No se encontraron {commerce_choice.lower()} cercanos en esta área.  Intenta con un radio más grande o diferente tipo de comercio.")
+                st.info("💡 Tip: Puedes agregar comercios manualmente en la sección 'Locales'.")
             else:
                 st.success(f"✅ Se encontraron {len(places)} {commerce_choice.lower()}:")
-                
+
                 for idx, place in enumerate(places, start=1):
                     with st.container(border=True):
                         col1, col2 = st. columns([3, 1])
-                        
+
                         with col1:
                             st.subheading(f"{idx}. {place['name']}")
                             st.write(f"📍 {place['address']}")
-                            
+
                             from math import radians, cos, sin, asin, sqrt
                             lon1, lat1, lon2, lat2 = map(radians, [lon, lat, place['lon'], place['lat']])
                             dlon = lon2 - lon1
@@ -626,9 +652,9 @@ elif page == "🗺️ Explorador de Comercios":
                             a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
                             c = 2 * asin(sqrt(a))
                             distance_km = 6371 * c
-                            
+
                             st.caption(f"📏 Distancia: {distance_km:.2f} km")
-                        
+
                         with col2:
                             if st.button(f"➕ Agregar", key=f"add_explorer_{idx}", use_container_width=True):
                                 try:
@@ -641,8 +667,8 @@ elif page == "🗺️ Explorador de Comercios":
                                             "p_lon": float(place["lon"])
                                         }
                                     ).execute()
-                                    st.success(f"✅ {place['name']} agregado a tu base de datos.")
-                                except Exception as e:
+                                    st. success(f"✅ {place['name']} agregado a tu base de datos.")
+                                except Exception as e: 
                                     st.error(f"❌ Error al agregar:  {e}")
                                     add_log("ERROR", f"Insert store (explorer): {e}")
 
@@ -691,8 +717,8 @@ elif page == "Alertas":
         else:
             for n in notes:
                 st.write(f"🔔 Notificación #{n['id']} — avistamiento {n['sighting_id']} — {n['created_at']}")
-    except Exception as e:
-        st.error(f"Error al cargar notificaciones: {e}")
+    except Exception as e: 
+        st.error(f"Error al cargar notificaciones:  {e}")
         add_log("ERROR", f"List notifications: {e}")
 
     st.divider()
@@ -721,13 +747,13 @@ elif page == "Alertas":
     if st.session_state.notif_auto:
         notif_fragment()
     else:
-        st.info("⏸️ Auto-actualización pausada.  Podés reanudarla cuando quieras.")
+        st.info("⏸️ Auto-actualización pausada. Podés reanudarla cuando quieras.")
 
     cols_rt = st.columns(3)
     with cols_rt[0]:
         if st.button("Actualizar ahora"):
             st.rerun()
-    with cols_rt[1]:
+    with cols_rt[1]: 
         if st.session_state.notif_auto and st.button("Pausar auto-actualización"):
             st.session_state.notif_auto = False
             st.success("⏸️ Auto-actualización pausada.")
@@ -737,7 +763,7 @@ elif page == "Alertas":
             st.success("▶️ Auto-actualización reanudada.")
 
 # =========================
-# PÁGINA: LOCALES (Gestión)
+# PÁGINA:  LOCALES (Gestión)
 # =========================
 elif page == "Locales":
     if not require_auth():
@@ -745,14 +771,15 @@ elif page == "Locales":
 
     st.title("🧾 Locales (supermercados) cargados")
 
+    # Prefill desde query_params
     if "lat" in st.query_params:
-        st.session_state["lat_txt_loc"] = st.query_params["lat"]
+        st.session_state["lat_txt_loc"] = str(st.query_params["lat"])
     if "lon" in st.query_params:
-        st.session_state["lon_txt_loc"] = st.query_params["lon"]
+        st.session_state["lon_txt_loc"] = str(st.query_params["lon"])
 
-    col_lat, col_lon, col_unit, col_rad = st.columns([1, 1, 0.8, 1.2])
-    lat_txt = col_lat.text_input("Latitud", key="lat_txt_loc", placeholder="-38.7183")
-    lon_txt = col_lon.text_input("Longitud", key="lon_txt_loc", placeholder="-62.2663")
+    col_lat, col_lon, col_unit, col_rad = st. columns([1, 1, 0.8, 1.2])
+    lat_txt = col_lat.text_input("Latitud", key="lat_txt_loc", placeholder="-38.7183", value=st.session_state. get("lat_txt_loc", ""))
+    lon_txt = col_lon.text_input("Longitud", key="lon_txt_loc", placeholder="-62.2663", value=st.session_state.get("lon_txt_loc", ""))
     unit = col_unit.selectbox("Unidad de radio", ["Kilómetros", "Metros"], index=0, key="unit_loc")
     if unit == "Kilómetros":
         radius_value = col_rad.slider("Radio (km)", 1, 15, 5, key="rad_km_loc")
@@ -761,12 +788,15 @@ elif page == "Locales":
         radius_value = col_rad.slider("Radio (m)", 50, 500, 200, step=50, key="rad_m_loc")
         radius_m = int(radius_value)
 
-    col_gps, col_info = st.columns([2, 3])
+    col_gps, col_info = st. columns([2, 3])
     with col_gps:
         if st.button("📍 Usar mi ubicación actual (GPS)", key="gps_loc", use_container_width=True):
             set_location_from_gps("lat_txt_loc", "lon_txt_loc")
     with col_info: 
         st.caption("Haz clic para obtener tu ubicación automáticamente del navegador.")
+
+    # Sincronizar a query_params
+    sync_location_to_query_params(lat_txt, lon_txt)
 
     st.subheader("Filtrar y ordenar")
     f_name = st.text_input("Nombre / Dirección contiene…", key="f_name")
@@ -805,21 +835,19 @@ elif page == "Locales":
 
     st.divider()
 
-    st.markdown("### Sugerencias externas (Google/OSM) para importar")
+    st.markdown("### Sugerencias externas (OSM/Google) para importar")
     OSM_CATEGORIES = {
-        "Supermercados": ("shop", "supermarket"),
-        "Almacenes":  ("shop", "convenience"),
-        "Farmacias":  ("amenity", "pharmacy"),
-        "Verdulerías": ("shop", "greengrocer"),
-        "Panaderías": ("shop", "bakery"),
-        "Kioscos": ("shop", "kiosk"),
-        "Carnicerías": ("shop", "butcher"),
-        "Librerías": ("shop", "books"),
-        "Ferreterías": ("shop", "hardware"),
+        "🏪 Supermercados": ("shop", "supermarket"),
+        "🏬 Almacenes": ("shop", "convenience"),
+        "💊 Farmacias": ("amenity", "pharmacy"),
+        "🥕 Verdulerías": ("shop", "greengrocer"),
+        "🍞 Panaderías": ("shop", "bakery"),
+        "🛍️ Kioscos": ("shop", "kiosk"),
+        "🥩 Carnicerías": ("shop", "butcher"),
+        "📚 Librerías": ("shop", "books"),
+        "🔨 Ferreterías": ("shop", "hardware"),
     }
-    kw = st.text_input("Filtro (Google) opcional, ej.:  'supermercado'", key="kw_loc")
-    t = st.text_input("Tipo (Google) opcional, ej.: 'supermarket'", key="type_loc")
-    osm_choice = st.selectbox("Categoría OSM", list(OSM_CATEGORIES.keys()))
+    osm_choice = st.selectbox("Categoría", list(OSM_CATEGORIES. keys()), key="osm_choice_locales")
     adv_col = st.checkbox("Modo avanzado (key/value OSM)", value=False, key="adv_loc")
     if adv_col: 
         key_adv = st.text_input("OSM key (ej.  shop/amenity)", value="shop", key="key_adv_loc")
@@ -827,16 +855,19 @@ elif page == "Locales":
     else:
         key_adv, val_adv = OSM_CATEGORIES[osm_choice]
 
-    if st.button("Buscar sugerencias cercanas"):
-        if lat is None or lon is None:
+    if st.button("Buscar sugerencias cercanas", key="btn_search_locales"):
+        if lat is None or lon is None: 
             st.error("Definí lat/lon primero.")
         else:
-            places_ext = places_nearby_google(lat, lon, radius_m, keyword=kw or None, place_type=t or None)
-            if not places_ext: 
-                places_ext = places_nearby_osm(lat, lon, radius_m, key=key_adv, value=val_adv)
+            # Primero intenta OSM
+            places_ext = places_nearby_osm(lat, lon, radius_m, key=key_adv, value=val_adv)
 
+            # Si no encuentra, intenta Google
             if not places_ext: 
-                st.info("No se encontraron sugerencias externas.")
+                places_ext = places_nearby_google(lat, lon, radius_m, place_type=val_adv)
+
+            if not places_ext:
+                st. info("No se encontraron sugerencias externas.")
             else:
                 for idx, pl in enumerate(places_ext, start=1):
                     st. write(f"{idx}. **{pl['name']}** — {pl['address']}")
@@ -844,7 +875,7 @@ elif page == "Locales":
                         try:
                             ins = supabase.rpc("insert_store", {
                                 "p_name": pl["name"], "p_address": pl["address"],
-                                "p_lat":  float(pl["lat"]), "p_lon": float(pl["lon"])
+                                "p_lat": float(pl["lat"]), "p_lon": float(pl["lon"])
                             }).execute()
                             st.success("Local importado a la DB.")
                         except Exception as e:
@@ -865,7 +896,7 @@ elif page == "Admin":
     try:
         rows = supabase.table("settings").select("*").eq("id", 1).execute().data
         if not rows:
-            st.warning("No existe la fila de settings (id=1). Ejecutá settings_schema.sql.")
+            st. warning("No existe la fila de settings (id=1). Ejecutá settings_schema.sql.")
             st.stop()
         current = rows[0]
     except Exception as e:
@@ -897,6 +928,6 @@ elif page == "Admin":
                 {"p_tolerance":  float(tol_pct) / 100.0, "p_window_days": int(win_days), "p_min_matches": int(min_matches)},
             ).execute()
             st.success("✅ Parámetros actualizados.")
-        except Exception as e:
-            st. error(f"No pudimos actualizar los parámetros:  {e}")
+        except Exception as e: 
+            st.error(f"No pudimos actualizar los parámetros:  {e}")
             st.info("Verificá que tu user_id esté en la tabla public.admins.")
