@@ -45,13 +45,13 @@ supabase = get_supabase()
 # =========================
 # Estado de sesión (inicial)
 # =========================
-st.session_state. setdefault("session", None)
+st.session_state.setdefault("session", None)
 st.session_state.setdefault("user_email", None)
 st.session_state.setdefault("auth_msg", None)
 
 # Navegación
 SECCIONES_BASE = ["Login", "Cargar Precio", "Lista de Precios", "Alertas", "🗺️ Explorador de Comercios", "Locales"]
-st.session_state.setdefault("nav", "Login")
+st.session_state. setdefault("nav", "Login")
 
 # Realtime (polling local)
 st.session_state.setdefault("notif_auto", True)
@@ -62,7 +62,7 @@ st.session_state.setdefault("otp_last_send", 0.0)
 # =========================
 # Helpers de sesión/seguridad
 # =========================
-def add_log(level: str, msg: str):
+def add_log(level:  str, msg: str):
     st.session_state.logs.append({"level": level, "msg": msg, "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
 
 def get_user_id():
@@ -76,7 +76,7 @@ def is_admin() -> bool:
     try:
         row = supabase.table("admins").select("user_id").eq("user_id", uid).limit(1).execute()
         return bool(row. data)
-    except Exception:  
+    except Exception: 
         return False
 
 def require_auth() -> bool:
@@ -100,7 +100,7 @@ if st.session_state.session:
         try:
             supabase.auth.sign_out()
             add_log("INFO", "Sign out OK")
-        except Exception as e:
+        except Exception as e: 
             add_log("ERROR", f"Sign out:  {e}")
         st.session_state.session = None
         st.session_state.user_email = None
@@ -116,7 +116,7 @@ if is_admin():
             st.write("Query params:", dict(st.query_params))
             st.write("Session keys:", list(st.session_state.keys()))
             st.write("is_admin():", is_admin())
-            st.write("session_state. debug:", st.session_state.debug)
+            st.write("session_state.debug:", st.session_state.debug)
         
         if st.sidebar.button("🔧 Probar GPS (debug)", key="test_gps_debug"):
             st.sidebar.info("Probando get_geolocation()...")
@@ -127,7 +127,7 @@ if is_admin():
                 loc = get_geolocation()
                 st.sidebar.write("✅ get_geolocation() raw:", loc)
                 st.sidebar.success("Prueba completada")
-            except Exception as e:  
+            except Exception as e: 
                 st.sidebar.error(f"❌ Debug GPS error: {e}")
         
         if st.session_state.logs:
@@ -156,7 +156,7 @@ if is_admin() and st.session_state.get("debug"):
 # PÁGINA LOGIN (OTP)
 # =========================
 if page == "Login":
-    st. title("🔐 Login (OTP por email)")
+    st.title("🔐 Login (OTP por email)")
     if st.session_state.auth_msg:
         st.info(st.session_state.auth_msg)
         st.session_state.auth_msg = None
@@ -176,7 +176,7 @@ if page == "Login":
         st.caption("Evitemos reenvíos seguidos para que el correo no lo marque como spam.")
     else:
         if st.button("Enviar código (OTP)"):
-            if not email or "@" not in email:  
+            if not email or "@" not in email:
                 st.error("Email inválido.")
             else:
                 try:
@@ -185,7 +185,7 @@ if page == "Login":
                     st.info("✅ Código enviado.  Revisá tu email.")
                     add_log("INFO", f"OTP enviado a {email}")
                 except Exception as e:
-                    st.error(f"No pudimos enviar el OTP: {e}")
+                    st.error(f"No pudimos enviar el OTP:  {e}")
                     add_log("ERROR", f"Enviar OTP:  {e}")
 
     if st.button("Validar código"):
@@ -210,7 +210,7 @@ elif page == "Cargar Precio":
 
     st.title("🛒 Registrar precio")
 
-    if "lat" in st.query_params:
+    if "lat" in st. query_params:
         st.session_state["lat_txt"] = st.query_params["lat"]
     if "lon" in st.query_params:
         st.session_state["lon_txt"] = st.query_params["lon"]
@@ -240,14 +240,14 @@ elif page == "Cargar Precio":
 
     nearby_options:  List[Dict] = []
     store_choice = None
-    if lat is not None and lon is not None:  
+    if lat is not None and lon is not None: 
         try:
             res = supabase.rpc(
                 "nearby_stores",
                 {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_m) / 1000.0}
             ).execute()
             nearby_options = res.data or []
-        except Exception as e:  
+        except Exception as e: 
             st.info("Aún no hay locales cercanos o hubo un error con la búsqueda.")
             add_log("ERROR", f"nearby_stores: {e}")
 
@@ -270,7 +270,7 @@ elif page == "Cargar Precio":
         t = st.text_input("Tipo (Google) opcional, ej.: 'supermarket'")
         osm_choice = st.selectbox("Categoría OSM", list(OSM_CATEGORIES.keys()))
         adv_col = st.checkbox("Modo avanzado (key/value OSM)", value=False)
-        if adv_col:
+        if adv_col: 
             key_adv = st.text_input("OSM key (ej.  shop/amenity)", value="shop")
             val_adv = st.text_input("OSM value (ej. supermarket)", value="supermarket")
         else:
@@ -294,7 +294,7 @@ elif page == "Cargar Precio":
                                     "insert_store",
                                     {"p_name": pl["name"], "p_address": pl["address"], "p_lat": float(pl["lat"]), "p_lon": float(pl["lon"])}
                                 ).execute()
-                                store_choice = (ins.data or [{}])[0]. get("id")
+                                store_choice = (ins.data or [{}])[0].get("id")
                                 st.session_state["store_choice"] = store_choice
                                 st.success("Local agregado y seleccionado.")
                             except Exception as e:
@@ -313,13 +313,13 @@ elif page == "Cargar Precio":
             new_store_name_a = st.text_input("Nombre del local", key="new_store_name_a")
             new_store_address_a = st.text_input("Dirección", key="new_store_address_a", placeholder="Calle y número, ciudad")
             if st.button("Buscar coordenadas y guardar"):
-                if not new_store_name_a or not new_store_address_a:
+                if not new_store_name_a or not new_store_address_a: 
                     st.error("Ingresá nombre y dirección.")
                 else:
                     g_lat, g_lon = geocode_address_google(new_store_address_a)
                     if not g_lat or not g_lon:
                         g_lat, g_lon = geocode_address_osm(new_store_address_a)
-                    if g_lat is None or g_lon is None:  
+                    if g_lat is None or g_lon is None:
                         st.error("No se pudo geocodificar la dirección (sin resultados).")
                     else:
                         try:
@@ -340,13 +340,13 @@ elif page == "Cargar Precio":
             lat_new = st.text_input("Latitud del local", key="lat_new", placeholder="-38.7180")
             lon_new = st.text_input("Longitud del local", key="lon_new", placeholder="-62.2700")
             if st.button("Guardar local"):
-                if not new_store_name:  
+                if not new_store_name: 
                     st.error("Ingresá el nombre del local.")
                 else:
                     lat_n = parse_coord(lat_new)
                     lon_n = parse_coord(lon_new)
                     if lat_n is None or lon_n is None:
-                        st. error("Ingresá latitud y longitud válidas.")
+                        st.error("Ingresá latitud y longitud válidas.")
                     else:
                         try:
                             ins = supabase.rpc(
@@ -356,7 +356,7 @@ elif page == "Cargar Precio":
                             store_choice = (ins.data or [{}])[0].get("id")
                             st. session_state["store_choice"] = store_choice
                             st.success("Local creado y seleccionado.")
-                        except Exception as e:  
+                        except Exception as e:
                             st.error(f"No se pudo crear el local: {e}")
                             add_log("ERROR", f"Insert store (manual): {e}")
 
@@ -380,18 +380,18 @@ elif page == "Cargar Precio":
         lat = parse_coord(st.session_state. get("lat_txt", ""))
         lon = parse_coord(st.session_state.get("lon_txt", ""))
 
-        if lat is None or lon is None:  
+        if lat is None or lon is None: 
             try:
                 srow = supabase.table("stores").select("id, lat, lon").eq("id", store_choice).single().execute()
                 lat = srow.data["lat"]
                 lon = srow.data["lon"]
-            except Exception:  
+            except Exception: 
                 st.error("No hay coordenadas del usuario ni del local seleccionadas.")
                 st.stop()
 
         user_id = get_user_id()
-        if not user_id:  
-            st.error("Tu sesión expiró.  Iniciá sesión nuevamente.")
+        if not user_id:
+            st.error("Tu sesión expiró. Iniciá sesión nuevamente.")
             st.session_state.nav = "Login"
             st.rerun()
 
@@ -419,7 +419,7 @@ elif page == "Cargar Precio":
                 }
             ).execute()
             st.success("✅ Precio registrado.  ¡Gracias por tu aporte!")
-        except Exception as e:  
+        except Exception as e: 
             st.error(f"Error al registrar el precio: {e}")
             add_log("ERROR", f"Insert sighting: {e}")
 
@@ -434,19 +434,19 @@ elif page == "Lista de Precios":
     if "lon" in st.query_params:
         st.session_state["lon_txt_lp"] = st.query_params["lon"]
 
-    col_lat, col_lon, col_unit, col_rad = st.columns([1, 1, 0.8, 1.2])
+    col_lat, col_lon, col_unit, col_rad = st. columns([1, 1, 0.8, 1.2])
     lat_txt = col_lat.text_input("Latitud", key="lat_txt_lp", placeholder="-38.7183")
     lon_txt = col_lon.text_input("Longitud", key="lon_txt_lp", placeholder="-62.2663")
     unit = col_unit.selectbox("Unidad de radio", ["Kilómetros", "Metros"], index=0, key="unit_lp")
-    if unit == "Kilómetros": 
+    if unit == "Kilómetros":
         radius_value = col_rad.slider("Radio (km)", 1, 15, 5, key="rad_km_lp")
         radius_m = int(radius_value * 1000)
     else:
         radius_value = col_rad.slider("Radio (m)", 50, 500, 200, step=50, key="rad_m_lp")
         radius_m = int(radius_value)
 
-    col_gps, col_info = st.columns([2, 3])
-    with col_gps:
+    col_gps, col_info = st. columns([2, 3])
+    with col_gps: 
         if st.button("📍 Usar mi ubicación actual (GPS)", key="gps_lp", use_container_width=True):
             set_location_from_gps("lat_txt_lp", "lon_txt_lp")
     with col_info:
@@ -461,10 +461,10 @@ elif page == "Lista de Precios":
     lon = parse_coord(lon_txt)
 
     try:
-        if lat is not None and lon is not None:  
+        if lat is not None and lon is not None: 
             st.query_params. lat = str(lat)
             st.query_params.lon = str(lon)
-    except Exception:  
+    except Exception: 
         pass
 
     if lat is None or lon is None: 
@@ -475,7 +475,7 @@ elif page == "Lista de Precios":
         stores = supabase.rpc(
             "nearby_stores", {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_m) / 1000.0}
         ).execute().data or []
-    except Exception as e: 
+    except Exception as e:
         st.error(f"Error buscando locales cercanos: {e}")
         add_log("ERROR", f"nearby_stores: {e}")
         st.stop()
@@ -529,7 +529,7 @@ elif page == "Lista de Precios":
         entries.sort(key=lambda e: e["latest_date"], reverse=True)
     elif order_by == "Precio ascendente":
         entries.sort(key=lambda e: (e["currency"], float(e["latest_price"])))
-    else:
+    else: 
         entries.sort(key=lambda e: (e["currency"], float(e["latest_price"])), reverse=True)
 
     entries = entries[:max_cards]
@@ -554,9 +554,8 @@ elif page == "🗺️ Explorador de Comercios":
     st.title("🗺️ Explorador de Comercios Cercanos")
     st.markdown("Descubre comercios cercanos a tu ubicación sin necesidad de cargarlos primero.")
 
-    # Obtener ubicación automáticamente
     st.subheader("Tu ubicación")
-    col_lat, col_lon, col_unit, col_rad = st.columns([1, 1, 0.8, 1.2])
+    col_lat, col_lon, col_unit, col_rad = st. columns([1, 1, 0.8, 1.2])
     lat_txt = col_lat.text_input("Latitud", key="lat_txt_explorer", placeholder="-38.7183")
     lon_txt = col_lon.text_input("Longitud", key="lon_txt_explorer", placeholder="-62.2663")
     unit = col_unit.selectbox("Unidad de radio", ["Kilómetros", "Metros"], index=0, key="unit_explorer")
@@ -574,10 +573,9 @@ elif page == "🗺️ Explorador de Comercios":
     with col_info: 
         st.caption("Haz clic para obtener tu ubicación automáticamente del navegador.")
 
-    # Tipos de comercios
     st.subheader("Tipo de comercio")
     COMMERCE_TYPES = {
-        "🏪 Supermercados":  ("shop", "supermarket"),
+        "🏪 Supermercados": ("shop", "supermarket"),
         "🏬 Almacenes": ("shop", "convenience"),
         "💊 Farmacias": ("amenity", "pharmacy"),
         "🥕 Verdulerías": ("shop", "greengrocer"),
@@ -588,27 +586,24 @@ elif page == "🗺️ Explorador de Comercios":
         "🔨 Ferreterías": ("shop", "hardware"),
         "☕ Cafeterías": ("amenity", "cafe"),
         "🍕 Pizzerías": ("amenity", "restaurant"),
-        "💄 Peluquerías":  ("shop", "hairdresser"),
+        "💄 Peluquerías": ("shop", "hairdresser"),
     }
 
     commerce_choice = st.selectbox("Selecciona el tipo de comercio:", list(COMMERCE_TYPES.keys()))
     key_type, val_type = COMMERCE_TYPES[commerce_choice]
 
-    # Buscar comercios
     if st.button("🔍 Buscar comercios cercanos", use_container_width=True):
         lat = parse_coord(lat_txt)
         lon = parse_coord(lon_txt)
 
-        if lat is None or lon is None:
+        if lat is None or lon is None: 
             st.error("❌ Por favor, ingresa tu ubicación (latitud y longitud).")
         else:
             st.info(f"🔍 Buscando {commerce_choice. lower()} en un radio de {radius_m/1000:. 1f} km...")
 
-            # Buscar en Google Maps primero
             places = places_nearby_google(lat, lon, radius_m, keyword=commerce_choice. split()[-1], place_type=val_type)
             
-            # Si no encuentra en Google, buscar en OSM
-            if not places: 
+            if not places:
                 places = places_nearby_osm(lat, lon, radius_m, key=key_type, value=val_type)
 
             if not places:
@@ -616,7 +611,6 @@ elif page == "🗺️ Explorador de Comercios":
             else:
                 st.success(f"✅ Se encontraron {len(places)} {commerce_choice.lower()}:")
                 
-                # Mostrar comercios en tarjetas
                 for idx, place in enumerate(places, start=1):
                     with st.container(border=True):
                         col1, col2 = st. columns([3, 1])
@@ -625,7 +619,6 @@ elif page == "🗺️ Explorador de Comercios":
                             st.subheading(f"{idx}. {place['name']}")
                             st.write(f"📍 {place['address']}")
                             
-                            # Calcular distancia
                             from math import radians, cos, sin, asin, sqrt
                             lon1, lat1, lon2, lat2 = map(radians, [lon, lat, place['lon'], place['lat']])
                             dlon = lon2 - lon1
@@ -648,8 +641,8 @@ elif page == "🗺️ Explorador de Comercios":
                                             "p_lon": float(place["lon"])
                                         }
                                     ).execute()
-                                    st. success(f"✅ {place['name']} agregado a tu base de datos.")
-                                except Exception as e: 
+                                    st.success(f"✅ {place['name']} agregado a tu base de datos.")
+                                except Exception as e:
                                     st.error(f"❌ Error al agregar:  {e}")
                                     add_log("ERROR", f"Insert store (explorer): {e}")
 
@@ -685,7 +678,7 @@ elif page == "Alertas":
                 }
             ).execute()
             st.success("✅ Alerta creada.")
-        except Exception as e:  
+        except Exception as e: 
             st.error(f"No pudimos crear la alerta: {e}")
             add_log("ERROR", f"Insert alert: {e}")
 
@@ -693,12 +686,12 @@ elif page == "Alertas":
     user_id = get_user_id()
     try:
         notes = supabase.table("notifications").select("id, alert_id, sighting_id, created_at").eq("user_id", user_id).order("created_at", desc=True).execute().data
-        if not notes:  
+        if not notes: 
             st.info("Todavía no hay notificaciones.")
         else:
             for n in notes:
                 st.write(f"🔔 Notificación #{n['id']} — avistamiento {n['sighting_id']} — {n['created_at']}")
-    except Exception as e:  
+    except Exception as e:
         st.error(f"Error al cargar notificaciones: {e}")
         add_log("ERROR", f"List notifications: {e}")
 
@@ -718,7 +711,7 @@ elif page == "Alertas":
                 sid = r["sighting_id"]
                 created = r["created_at"]
                 st.toast(f"🔔 Nueva notificación #{nid} — avistamiento {sid} — {created}", icon="🔔")
-                if nid > st.session_state["last_notif_id"]:  
+                if nid > st.session_state["last_notif_id"]: 
                     st.session_state["last_notif_id"] = nid
             if not rows:
                 st.caption("Sin notificaciones nuevas por el momento.")
@@ -731,14 +724,14 @@ elif page == "Alertas":
         st.info("⏸️ Auto-actualización pausada.  Podés reanudarla cuando quieras.")
 
     cols_rt = st.columns(3)
-    with cols_rt[0]:  
+    with cols_rt[0]:
         if st.button("Actualizar ahora"):
             st.rerun()
-    with cols_rt[1]: 
+    with cols_rt[1]:
         if st.session_state.notif_auto and st.button("Pausar auto-actualización"):
             st.session_state.notif_auto = False
             st.success("⏸️ Auto-actualización pausada.")
-    with cols_rt[2]:  
+    with cols_rt[2]: 
         if (not st.session_state.notif_auto) and st.button("Reanudar auto-actualización"):
             st.session_state.notif_auto = True
             st.success("▶️ Auto-actualización reanudada.")
@@ -759,9 +752,9 @@ elif page == "Locales":
 
     col_lat, col_lon, col_unit, col_rad = st.columns([1, 1, 0.8, 1.2])
     lat_txt = col_lat.text_input("Latitud", key="lat_txt_loc", placeholder="-38.7183")
-    lon_txt = col_lon. text_input("Longitud", key="lon_txt_loc", placeholder="-62.2663")
+    lon_txt = col_lon.text_input("Longitud", key="lon_txt_loc", placeholder="-62.2663")
     unit = col_unit.selectbox("Unidad de radio", ["Kilómetros", "Metros"], index=0, key="unit_loc")
-    if unit == "Kilómetros":  
+    if unit == "Kilómetros":
         radius_value = col_rad.slider("Radio (km)", 1, 15, 5, key="rad_km_loc")
         radius_m = int(radius_value * 1000)
     else:
@@ -782,7 +775,7 @@ elif page == "Locales":
     st.markdown("### Locales en la base (cercanos)")
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
-    if lat is None or lon is None:
+    if lat is None or lon is None: 
         st.info("Definí lat/lon para ver locales cercanos.")
     else:
         try:
@@ -816,7 +809,7 @@ elif page == "Locales":
     OSM_CATEGORIES = {
         "Supermercados": ("shop", "supermarket"),
         "Almacenes":  ("shop", "convenience"),
-        "Farmacias": ("amenity", "pharmacy"),
+        "Farmacias":  ("amenity", "pharmacy"),
         "Verdulerías": ("shop", "greengrocer"),
         "Panaderías": ("shop", "bakery"),
         "Kioscos": ("shop", "kiosk"),
@@ -828,25 +821,25 @@ elif page == "Locales":
     t = st.text_input("Tipo (Google) opcional, ej.: 'supermarket'", key="type_loc")
     osm_choice = st.selectbox("Categoría OSM", list(OSM_CATEGORIES.keys()))
     adv_col = st.checkbox("Modo avanzado (key/value OSM)", value=False, key="adv_loc")
-    if adv_col:  
+    if adv_col: 
         key_adv = st.text_input("OSM key (ej.  shop/amenity)", value="shop", key="key_adv_loc")
         val_adv = st.text_input("OSM value (ej. supermarket)", value="supermarket", key="val_adv_loc")
     else:
         key_adv, val_adv = OSM_CATEGORIES[osm_choice]
 
     if st.button("Buscar sugerencias cercanas"):
-        if lat is None or lon is None:  
+        if lat is None or lon is None:
             st.error("Definí lat/lon primero.")
         else:
             places_ext = places_nearby_google(lat, lon, radius_m, keyword=kw or None, place_type=t or None)
             if not places_ext: 
                 places_ext = places_nearby_osm(lat, lon, radius_m, key=key_adv, value=val_adv)
 
-            if not places_ext:  
+            if not places_ext: 
                 st.info("No se encontraron sugerencias externas.")
             else:
                 for idx, pl in enumerate(places_ext, start=1):
-                    st.write(f"{idx}. **{pl['name']}** — {pl['address']}")
+                    st. write(f"{idx}. **{pl['name']}** — {pl['address']}")
                     if st.button(f"Importar #{idx} a la DB", key=f"import_ext_{idx}"):
                         try:
                             ins = supabase.rpc("insert_store", {
@@ -854,8 +847,8 @@ elif page == "Locales":
                                 "p_lat":  float(pl["lat"]), "p_lon": float(pl["lon"])
                             }).execute()
                             st.success("Local importado a la DB.")
-                        except Exception as e:  
-                            st.error(f"No se pudo importar:  {e}")
+                        except Exception as e:
+                            st. error(f"No se pudo importar:  {e}")
 
 # =========================
 # PÁGINA ADMIN (Settings)
@@ -904,6 +897,6 @@ elif page == "Admin":
                 {"p_tolerance":  float(tol_pct) / 100.0, "p_window_days": int(win_days), "p_min_matches": int(min_matches)},
             ).execute()
             st.success("✅ Parámetros actualizados.")
-        except Exception as e:  
-            st.error(f"No pudimos actualizar los parámetros:  {e}")
+        except Exception as e:
+            st. error(f"No pudimos actualizar los parámetros:  {e}")
             st.info("Verificá que tu user_id esté en la tabla public.admins.")
