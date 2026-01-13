@@ -4,5 +4,4 @@ python-dotenv
 pandas
 websocket-client
 requests
-streamlit-geolocation
 streamlit-js-eval==1.0.0

@@ -16,13 +16,14 @@ from utils.geolocation_providers import (
     geocode_address_google, places_nearby_google,
     geocode_address_osm, places_nearby_osm
 )
+from utils.geolocation import set_location_from_gps
 
 # =========================
 # Configuración general
 # =========================
 st.set_page_config(page_title="Precios Cercanos", layout="wide")
 
-# Cargar CSS externo (styles.css) - FIX: inyectar el contenido
+# Cargar CSS externo (styles.css)
 try:
     with open("styles.css", "r", encoding="utf-8") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
@@ -35,11 +36,11 @@ supabase = get_supabase()
 # =========================
 # Estado de sesión (inicial)
 # =========================
-st.session_state.setdefault("session", None)
+st. session_state. setdefault("session", None)
 st.session_state.setdefault("user_email", None)
 st.session_state.setdefault("auth_msg", None)
 
-# Navegación (incluye nueva página "Locales")
+# Navegación
 SECCIONES_BASE = ["Login", "Cargar Precio", "Lista de Precios", "Alertas", "Locales"]
 st.session_state.setdefault("nav", "Login")
 
@@ -53,10 +54,10 @@ st.session_state.setdefault("otp_last_send", 0.0)
 # Helpers de sesión/seguridad
 # =========================
 def add_log(level: str, msg: str):
-    st.session_state.logs.append({"level": level, "msg": msg, "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
+    st.session_state.logs.append({"level": level, "msg":  msg, "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
 
 def get_user_id():
-    sess = st.session_state.get("session")
+    sess = st.session_state. get("session")
     return getattr(getattr(sess, "user", None), "id", None)
 
 def is_admin() -> bool:
@@ -65,129 +66,24 @@ def is_admin() -> bool:
         return False
     try:
         row = supabase.table("admins").select("user_id").eq("user_id", uid).limit(1).execute()
-        return bool(row.data)
+        return bool(row. data)
     except Exception:
         return False
 
 def require_auth() -> bool:
     if not (st.session_state.session and get_user_id()):
-        st.session_state.auth_msg = "Tu sesión no está activa. Iniciá sesión para continuar."
+        st.session_state.auth_msg = "Tu sesión no está activa.  Iniciá sesión para continuar."
         st.session_state.nav = "Login"
         st.rerun()
         return False
     return True
-
-def set_location_from_gps(lat_key: str, lon_key: str):
-    """
-    Obtiene la ubicación actual en este orden:
-      1) streamlit-js-eval (loc['coords'].latitude/longitude o loc['error'])
-      2) Componente HTML con navigator.geolocation y recarga (?lat=&lon=)
-    *El componente streamlit-geolocation se muestra aparte (persistente) para que el usuario pulse su botón interno.*
-    Actualiza session_state y st.query_params. Loguea diagnóstico en modo admin.
-    """
-    # 1) Intento: streamlit-js-eval
-    try:
-        from streamlit_js_eval import get_geolocation, get_user_agent
-        st.info("Si tu navegador solicita permiso de ubicación, aceptalo para continuar.")
-        ua = get_user_agent()
-        add_log("INFO", f"User-Agent via js_eval: {ua}")
-        loc = get_geolocation()  # dict con 'coords' o 'error'
-        add_log("INFO", f"get_geolocation() via js_eval: {loc}")
-
-        if isinstance(loc, dict):
-            # Manejo de errores (permiso denegado, etc.)
-            if "error" in loc and isinstance(loc["error"], dict):
-                code = loc["error"].get("code")
-                message = loc["error"].get("message", "Error de geolocalización")
-                if code == 1:  # PERMISSION_DENIED
-                    st.warning("Ubicación denegada por el navegador. Permitila en los ajustes del sitio.")
-                    return
-                else:
-                    st.warning(f"No se pudo obtener la ubicación: {message}")
-            else:
-                coords = loc.get("coords") or {}
-                lat_val = coords.get("latitude")
-                lon_val = coords.get("longitude")
-                if lat_val is not None and lon_val is not None:
-                    lat_val = float(lat_val); lon_val = float(lon_val)
-                    st.session_state[lat_key] = str(lat_val)
-                    st.session_state[lon_key] = str(lon_val)
-                    st.query_params.lat = str(lat_val)
-                    st.query_params.lon = str(lon_val)
-                    st.success("📍 Ubicación actual establecida (js-eval).")
-                    return
-        else:
-            st.warning("No se obtuvo ubicación (respuestas JS no válidas). Pasamos a modo HTML.")
-    except Exception as e:
-        add_log("ERROR", f"js-eval falló: {e}")
-
-    # 2) Último recurso: HTML puro con navigator.geolocation y recarga (?lat=&lon=)
-    geolocation_html = """
-    <div style="margin:8px 0;">
-      <button id="geo-btn" style="
-        background:#4CAF50;color:#fff;border:none;border-radius:8px;
-        padding:10px 16px;font-size:16px;cursor:pointer;">
-        📍 Usar mi ubicación actual (HTML)
-      </button>
-      <span id="geo-status" style="margin-left:10px;color:#888;font-size:14px;"></span>
-    </div>
-    <script>
-    (function(){
-      const statusEl = document.getElementById('geo-status');
-      const btn = document.getElementById('geo-btn');
-      function setStatus(msg, color='#888'){ statusEl.textContent = msg; statusEl.style.color = color; }
-      function onSuccess(pos){
-        const { latitude, longitude } = pos.coords;
-        const lat = Number(latitude.toFixed(6));
-        const lon = Number(longitude.toFixed(6));
-        setStatus(`Lat: ${lat}, Lon: ${lon} (OK)`, '#4CAF50');
-        const topWin = window.top || window.parent || window;
-        const url = new URL(topWin.location.href);
-        url.searchParams.set('lat', String(lat));
-        url.searchParams.set('lon', String(lon));
-        topWin.location.assign(url.toString());
-      }
-      function onError(err){
-        console.warn(err);
-        switch(err.code){
-          case err.PERMISSION_DENIED:
-            setStatus('Permiso denegado. Habilitá acceso a ubicación.', '#d9534f'); break;
-          case err.POSITION_UNAVAILABLE:
-            setStatus('Posición no disponible.', '#d9534f'); break;
-          case err.TIMEOUT:
-            setStatus('Tiempo excedido.', '#d9534f'); break;
-          default:
-            setStatus('Error de geolocalización.', '#d9534f');
-        }
-      }
-      btn.addEventListener('click', function(){
-        setStatus('Obteniendo ubicación…');
-        if (!navigator.geolocation){
-          setStatus('Geolocalización no soportada por el navegador.', '#d9534f');
-          return;
-        }
-        navigator.geolocation.getCurrentPosition(onSuccess, onError, {
-          enableHighAccuracy: true, timeout: 10000, maximumAge: 0
-        });
-      });
-    })();
-    </script>
-    """
-    st.info("Activando componente HTML de fallback para geolocalización…")
-    # FIX: components.html NO acepta unsafe_allow_javascript
-    components.html(geolocation_html, height=100, scrolling=False)
-    # Al volver de la recarga, leo los query params
-    if "lat" in st.query_params and "lon" in st.query_params:
-        st.session_state[lat_key] = str(st.query_params["lat"])
-        st.session_state[lon_key] = str(st.query_params["lon"])
-        st.success("📍 Ubicación actual establecida (HTML).")
 
 # =========================
 # Sidebar + navegación
 # =========================
 SECCIONES = SECCIONES_BASE + (["Admin"] if is_admin() else [])
 st.sidebar.title("🧭 Navegación")
-page = st.sidebar.radio("Secciones", SECCIONES, index=SECCIONES.index(st.session_state["nav"]))
+page = st.sidebar.radio("Secciones", SECCIONES, index=SECCIONES.index(st. session_state["nav"]))
 
 if st.session_state.session:
     st.sidebar.success(f"Conectado: {st.session_state.user_email}")
@@ -195,14 +91,14 @@ if st.session_state.session:
         try:
             supabase.auth.sign_out()
             add_log("INFO", "Sign out OK")
-        except Exception as e:
-            add_log("ERROR", f"Sign out: {e}")
+        except Exception as e: 
+            add_log("ERROR", f"Sign out:  {e}")
         st.session_state.session = None
         st.session_state.user_email = None
-        st.session_state.nav = "Login"
+        st. session_state.nav = "Login"
         st.rerun()
 
-# Modo debug solo si sos admin + panel
+# Modo debug solo si sos admin
 if is_admin():
     st.sidebar.checkbox("🧪 Modo debug", key="debug", value=False)
     if st.session_state.debug:
@@ -210,15 +106,6 @@ if is_admin():
             st.write("User ID:", get_user_id())
             st.write("Query params:", dict(st.query_params))
             st.write("Session keys:", list(st.session_state.keys()))
-        if st.sidebar.button("🔧 Probar GPS (debug)"):
-            try:
-                from streamlit_js_eval import get_geolocation, get_user_agent
-                ua = get_user_agent()
-                st.sidebar.write("User-Agent (js-eval):", ua)
-                loc = get_geolocation()
-                st.sidebar.write("get_geolocation() raw:", loc)
-            except Exception as e:
-                st.sidebar.error(f"Debug GPS error: {e}")
         if st.session_state.logs:
             with st.sidebar.expander("Logs recientes", expanded=False):
                 for entry in reversed(st.session_state.logs[-30:]):
@@ -249,7 +136,7 @@ if page == "Login":
     remaining = max(0, int(COOLDOWN_SEC - elapsed))
 
     if cooldown_active:
-        st.button(f"Enviar código (OTP) — Esperá {remaining}s", disabled=True)
+        st. button(f"Enviar código (OTP) — Esperá {remaining}s", disabled=True)
         st.caption("Evitemos reenvíos seguidos para que el correo no lo marque como spam.")
     else:
         if st.button("Enviar código (OTP)"):
@@ -258,7 +145,7 @@ if page == "Login":
             else:
                 try:
                     supabase.auth.sign_in_with_otp({"email": email})
-                    st.session_state.otp_last_send = time.time()
+                    st.session_state.otp_last_send = time. time()
                     st.info("✅ Código enviado. Revisá tu email.")
                     add_log("INFO", f"OTP enviado a {email}")
                 except Exception as e:
@@ -297,7 +184,7 @@ elif page == "Cargar Precio":
     st.subheader("Tu ubicación")
     col_lat, col_lon, col_unit, col_rad = st.columns([1, 1, 0.8, 1.2])
     lat_txt = col_lat.text_input("Latitud", key="lat_txt", placeholder="-38.7183")
-    lon_txt = col_lon.text_input("Longitud", key="lon_txt", placeholder="-62.2663")
+    lon_txt = col_lon. text_input("Longitud", key="lon_txt", placeholder="-62.2663")
     unit = col_unit.selectbox("Unidad de radio", ["Kilómetros", "Metros"], index=0)
     if unit == "Kilómetros":
         radius_value = col_rad.slider("Radio (km)", 1, 15, 5)
@@ -306,38 +193,29 @@ elif page == "Cargar Precio":
         radius_value = col_rad.slider("Radio (m)", 50, 500, 200, step=50)
         radius_m = int(radius_value)
 
-    # Botón GPS (llama a js-eval y, si falla, muestra fallback HTML)
-    if st.button("📍 Usar mi ubicación actual (GPS)"):
-        set_location_from_gps("lat_txt", "lon_txt")
+    # BOTÓN GPS ÚNICO Y MEJORADO
+    col_gps, col_info = st.columns([2, 3])
+    with col_gps:
+        if st.button("📍 Usar mi ubicación actual (GPS)", key="gps_main", use_container_width=True):
+            set_location_from_gps("lat_txt", "lon_txt")
 
-    # (Opcional) Componente persistente streamlit-geolocation (botón interno propio)
-    with st.expander("📍 GPS avanzado (componente)", expanded=False):
-        try:
-            from streamlit_geolocation import streamlit_geolocation
-            loc2 = streamlit_geolocation()
-            if isinstance(loc2, dict) and loc2.get("latitude") is not None and loc2.get("longitude") is not None:
-                st.session_state["lat_txt"] = str(float(loc2["latitude"]))
-                st.session_state["lon_txt"] = str(float(loc2["longitude"]))
-                st.query_params.lat = st.session_state["lat_txt"]
-                st.query_params.lon = st.session_state["lon_txt"]
-                st.success("📍 Ubicación establecida (streamlit-geolocation).")
-        except Exception as e:
-            st.caption(f"Componente streamlit-geolocation no disponible: {e}")
+    with col_info:
+        st.caption("Haz clic para obtener tu ubicación automáticamente del navegador.")
 
     # Parseo
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
 
-    nearby_options: List[Dict] = []
+    nearby_options:  List[Dict] = []
     store_choice = None
-    if lat is not None and lon is not None:
+    if lat is not None and lon is not None: 
         try:
             res = supabase.rpc(
                 "nearby_stores",
                 {"lat": float(lat), "lon": float(lon), "radius_km": float(radius_m) / 1000.0}
             ).execute()
             nearby_options = res.data or []
-        except Exception as e:
+        except Exception as e: 
             st.info("Aún no hay locales cercanos o hubo un error con la búsqueda.")
             add_log("ERROR", f"nearby_stores: {e}")
 
@@ -347,7 +225,7 @@ elif page == "Cargar Precio":
     OSM_CATEGORIES = {
         "Supermercados": ("shop", "supermarket"),
         "Almacenes": ("shop", "convenience"),
-        "Farmacias": ("amenity", "pharmacy"),
+        "Farmacias":  ("amenity", "pharmacy"),
         "Verdulerías": ("shop", "greengrocer"),
         "Panaderías": ("shop", "bakery"),
         "Kioscos": ("shop", "kiosk"),
@@ -357,18 +235,18 @@ elif page == "Cargar Precio":
     }
 
     with st.expander("🔍 Sugerencias cercanas (Google/OSM)", expanded=False):
-        kw = st.text_input("Filtro (Google) opcional, ej.: 'supermercado'")
+        kw = st.text_input("Filtro (Google) opcional, ej.:  'supermercado'")
         t = st.text_input("Tipo (Google) opcional, ej.: 'supermarket'")
         osm_choice = st.selectbox("Categoría OSM", list(OSM_CATEGORIES.keys()))
         adv_col = st.checkbox("Modo avanzado (key/value OSM)", value=False)
-        if adv_col:
-            key_adv = st.text_input("OSM key (ej. shop/amenity)", value="shop")
+        if adv_col: 
+            key_adv = st.text_input("OSM key (ej.  shop/amenity)", value="shop")
             val_adv = st.text_input("OSM value (ej. supermarket)", value="supermarket")
         else:
             key_adv, val_adv = OSM_CATEGORIES[osm_choice]
 
         if st.button("Buscar locales cercanos"):
-            if lat is None or lon is None:
+            if lat is None or lon is None: 
                 st.error("Definí latitud/longitud (GPS o manual).")
             else:
                 g_places = places_nearby_google(lat, lon, radius_m, keyword=kw or None, place_type=t or None)
@@ -378,7 +256,7 @@ elif page == "Cargar Precio":
                     st.info("No se encontraron sugerencias.")
                 else:
                     for idx, pl in enumerate(g_places, start=1):
-                        st.write(f"{idx}. **{pl['name']}** — {pl['address']}")
+                        st. write(f"{idx}. **{pl['name']}** — {pl['address']}")
                         if st.button(f"Agregar este local #{idx}", key=f"add_place_{idx}"):
                             try:
                                 ins = supabase.rpc(
@@ -399,7 +277,7 @@ elif page == "Cargar Precio":
         selected_id = st.selectbox("Elegí un local cercano", ids, format_func=lambda x: labels[x])
         store_choice = selected_id
     else:
-        st.info("No encontramos locales cerca de tu ubicación. Podés crear uno nuevo.")
+        st.info("No encontramos locales cerca de tu ubicación.  Podés crear uno nuevo.")
         tabs = st.tabs(["📍 Por dirección", "➕ Crear manual (lat/lon)"])
         with tabs[0]:
             new_store_name_a = st.text_input("Nombre del local", key="new_store_name_a")
@@ -411,19 +289,19 @@ elif page == "Cargar Precio":
                     g_lat, g_lon = geocode_address_google(new_store_address_a)
                     if not g_lat or not g_lon:
                         g_lat, g_lon = geocode_address_osm(new_store_address_a)
-                    if g_lat is None or g_lon is None:
+                    if g_lat is None or g_lon is None: 
                         st.error("No se pudo geocodificar la dirección (sin resultados).")
                     else:
                         try:
                             ins = supabase.rpc(
                                 "insert_store",
-                                {"p_name": new_store_name_a, "p_address": new_store_address_a, "p_lat": float(g_lat), "p_lon": float(g_lon)}
+                                {"p_name":  new_store_name_a, "p_address": new_store_address_a, "p_lat": float(g_lat), "p_lon": float(g_lon)}
                             ).execute()
-                            store_choice = (ins.data or [{}])[0].get("id")
+                            store_choice = (ins. data or [{}])[0].get("id")
                             st.session_state["store_choice"] = store_choice
                             st.success(f"Local creado y seleccionado (lat={g_lat}, lon={g_lon}).")
                         except Exception as e:
-                            st.error(f"No se pudo crear el local: {e}")
+                            st. error(f"No se pudo crear el local: {e}")
                             add_log("ERROR", f"Insert store (geocode): {e}")
 
         with tabs[1]:
@@ -432,7 +310,7 @@ elif page == "Cargar Precio":
             lat_new = st.text_input("Latitud del local", key="lat_new", placeholder="-38.7180")
             lon_new = st.text_input("Longitud del local", key="lon_new", placeholder="-62.2700")
             if st.button("Guardar local"):
-                if not new_store_name:
+                if not new_store_name: 
                     st.error("Ingresá el nombre del local.")
                 else:
                     lat_n = parse_coord(lat_new)
@@ -443,13 +321,13 @@ elif page == "Cargar Precio":
                         try:
                             ins = supabase.rpc(
                                 "insert_store",
-                                {"p_name": new_store_name, "p_address": new_store_address, "p_lat": float(lat_n), "p_lon": float(lon_n)}
+                                {"p_name":  new_store_name, "p_address": new_store_address, "p_lat": float(lat_n), "p_lon": float(lon_n)}
                             ).execute()
                             store_choice = (ins.data or [{}])[0].get("id")
-                            st.session_state["store_choice"] = store_choice
+                            st. session_state["store_choice"] = store_choice
                             st.success("Local creado y seleccionado.")
-                        except Exception as e:
-                            st.error(f"No se pudo crear el local: {e}")
+                        except Exception as e: 
+                            st.error(f"No se pudo crear el local:  {e}")
                             add_log("ERROR", f"Insert store (manual): {e}")
 
     st.subheader("Producto y precio")
@@ -458,7 +336,7 @@ elif page == "Cargar Precio":
     currency = st.selectbox("Moneda", ["ARS", "USD", "EUR"])
 
     if st.button("Registrar precio"):
-        if not product_name_input:
+        if not product_name_input: 
             st.error("Ingresá el nombre del producto.")
             st.stop()
 
@@ -469,22 +347,22 @@ elif page == "Cargar Precio":
             st.error("Seleccioná un local o creá uno nuevo.")
             st.stop()
 
-        # Asegurarnos de tener lat/lon del usuario; si no, usamos las del local:
+        # Asegurarnos de tener lat/lon del usuario
         lat = parse_coord(st.session_state.get("lat_txt", ""))
-        lon = parse_coord(st.session_state.get("lon_txt", ""))
+        lon = parse_coord(st.session_state. get("lon_txt", ""))
 
-        if lat is None or lon is None:
+        if lat is None or lon is None: 
             try:
                 srow = supabase.table("stores").select("id, lat, lon").eq("id", store_choice).single().execute()
                 lat = srow.data["lat"]
                 lon = srow.data["lon"]
-            except Exception:
+            except Exception: 
                 st.error("No hay coordenadas del usuario ni del local seleccionadas.")
                 st.stop()
 
         user_id = get_user_id()
-        if not user_id:
-            st.error("Tu sesión expiró. Iniciá sesión nuevamente.")
+        if not user_id: 
+            st.error("Tu sesión expiró.  Iniciá sesión nuevamente.")
             st.session_state.nav = "Login"
             st.rerun()
 
@@ -503,7 +381,7 @@ elif page == "Cargar Precio":
         try:
             supabase.table("sightings").insert(
                 {
-                    "user_id": user_id,
+                    "user_id":  user_id,
                     "product_id": product_id,
                     "store_id": store_choice,
                     "price": float(price),
@@ -511,7 +389,7 @@ elif page == "Cargar Precio":
                     "lon": float(lon),
                 }
             ).execute()
-            st.success("✅ Precio registrado. ¡Gracias por tu aporte!")
+            st.success("✅ Precio registrado.  ¡Gracias por tu aporte!")
         except Exception as e:
             st.error(f"Error al registrar el precio: {e}")
             add_log("ERROR", f"Insert sighting: {e}")
@@ -538,11 +416,15 @@ elif page == "Lista de Precios":
         radius_value = col_rad.slider("Radio (m)", 50, 500, 200, step=50, key="rad_m_lp")
         radius_m = int(radius_value)
 
-    if st.button("📍 Usar mi ubicación actual (GPS)", key="gps_lp"):
-        set_location_from_gps("lat_txt_lp", "lon_txt_lp")
+    col_gps, col_info = st. columns([2, 3])
+    with col_gps:
+        if st.button("📍 Usar mi ubicación actual (GPS)", key="gps_lp", use_container_width=True):
+            set_location_from_gps("lat_txt_lp", "lon_txt_lp")
+    with col_info:
+        st.caption("Haz clic para obtener tu ubicación automáticamente del navegador.")
 
     st.subheader("Filtros y orden")
-    filter_text = st.text_input("Filtrar producto", placeholder="Ej.: leche, yerba, arroz")
+    filter_text = st.text_input("Filtrar producto", placeholder="Ej.:  leche, yerba, arroz")
     order_by = st.radio("Ordenar por", ["Fecha (reciente)", "Precio ascendente", "Precio descendente"], horizontal=True)
     max_cards = st.number_input("Máximo de tarjetas a mostrar", min_value=10, max_value=200, value=50, step=10)
 
@@ -550,10 +432,10 @@ elif page == "Lista de Precios":
     lon = parse_coord(lon_txt)
 
     try:
-        if lat is not None and lon is not None:
-            st.query_params.lat = str(lat)
+        if lat is not None and lon is not None: 
+            st.query_params. lat = str(lat)
             st.query_params.lon = str(lon)
-    except Exception:
+    except Exception: 
         pass
 
     if lat is None or lon is None:
@@ -578,7 +460,7 @@ elif page == "Lista de Precios":
         "id, product_id, store_id, price, created_at, is_validated"
     ).in_("store_id", store_ids).execute().data
 
-    if not sightings:
+    if not sightings: 
         st.info("Aún no hay precios cargados en estos locales.")
         st.stop()
 
@@ -589,7 +471,7 @@ elif page == "Lista de Precios":
 
     grouped = defaultdict(list)
     for s in sightings:
-        grouped[(s["product_id"], s["store_id"])] = grouped.get((s["product_id"], s["store_id"]), []) + [s]
+        grouped[(s["product_id"], s["store_id"])] = grouped. get((s["product_id"], s["store_id"]), []) + [s]
 
     entries = []
     for (pid, sid), items in grouped.items():
@@ -598,10 +480,10 @@ elif page == "Lista de Precios":
         count = len(items)
         label = confidence_label(count)
         css_class = confidence_class(count)
-        prod = prod_map.get(pid, {"name": f"producto {pid}", "currency": "ARS"})
+        prod = prod_map. get(pid, {"name": f"producto {pid}", "currency": "ARS"})
         store = store_map.get(sid, {"name": f"Local {sid}", "meters": None})
         display_name = prettify_product(prod["name"])
-        meters_str = f"{int(store['meters'])} m" if store.get("meters") is not None else ""
+        meters_str = f"{int(store['meters'])} m" if store. get("meters") is not None else ""
         entries.append({
             "pid": pid, "sid": sid, "display_name": display_name, "raw_name": prod["name"],
             "currency": prod["currency"], "store_name": store["name"], "meters_str": meters_str,
@@ -612,7 +494,7 @@ elif page == "Lista de Precios":
     if filter_text:
         ft_norm = normalize_product(filter_text)
         ft_lower = filter_text.strip().lower()
-        entries = [e for e in entries if (ft_norm in e["raw_name"]) or (ft_lower in e["display_name"].lower())]
+        entries = [e for e in entries if (ft_norm in e["raw_name"]) or (ft_lower in e["display_name"]. lower())]
 
     if order_by == "Fecha (reciente)":
         entries.sort(key=lambda e: e["latest_date"], reverse=True)
@@ -637,7 +519,7 @@ elif page == "Lista de Precios":
             )
 
 # =========================
-# NUEVA PÁGINA: LOCALES (Gestión)
+# PÁGINA:  LOCALES (Gestión)
 # =========================
 elif page == "Locales":
     if not require_auth():
@@ -648,21 +530,25 @@ elif page == "Locales":
     if "lat" in st.query_params:
         st.session_state["lat_txt_loc"] = st.query_params["lat"]
     if "lon" in st.query_params:
-        st.session_state["lon_txt_loc"] = st.query_params["lon"]
+        st.session_state["lon_txt_loc"] = st. query_params["lon"]
 
     col_lat, col_lon, col_unit, col_rad = st.columns([1, 1, 0.8, 1.2])
     lat_txt = col_lat.text_input("Latitud", key="lat_txt_loc", placeholder="-38.7183")
     lon_txt = col_lon.text_input("Longitud", key="lon_txt_loc", placeholder="-62.2663")
     unit = col_unit.selectbox("Unidad de radio", ["Kilómetros", "Metros"], index=0, key="unit_loc")
-    if unit == "Kilómetros":
+    if unit == "Kilómetros": 
         radius_value = col_rad.slider("Radio (km)", 1, 15, 5, key="rad_km_loc")
         radius_m = int(radius_value * 1000)
     else:
         radius_value = col_rad.slider("Radio (m)", 50, 500, 200, step=50, key="rad_m_loc")
         radius_m = int(radius_value)
 
-    if st.button("📍 Usar mi ubicación actual (GPS)", key="gps_loc"):
-        set_location_from_gps("lat_txt_loc", "lon_txt_loc")
+    col_gps, col_info = st.columns([2, 3])
+    with col_gps:
+        if st. button("📍 Usar mi ubicación actual (GPS)", key="gps_loc", use_container_width=True):
+            set_location_from_gps("lat_txt_loc", "lon_txt_loc")
+    with col_info: 
+        st.caption("Haz clic para obtener tu ubicación automáticamente del navegador.")
 
     # Filtros para lista (DB)
     st.subheader("Filtrar y ordenar")
@@ -687,7 +573,7 @@ elif page == "Locales":
 
         if f_name:
             term = f_name.strip().lower()
-            rows = [r for r in rows if term in (r.get("name","") or "").lower() or term in (r.get("address","") or "").lower()]
+            rows = [r for r in rows if term in (r. get("name","") or "").lower() or term in (r.get("address","") or "").lower()]
 
         if order == "Nombre":
             rows.sort(key=lambda r: (r.get("name","") or "").lower())
@@ -699,7 +585,7 @@ elif page == "Locales":
         else:
             for r in rows:
                 meters = int(r.get("meters") or 0)
-                st.write(f"• **{r['name']}** — {r.get('address','')} — {meters} m (id={r['id']})")
+                st.write(f"• **{r['name']}** — {r. get('address','')} — {meters} m (id={r['id']})")
 
     st.divider()
 
@@ -716,29 +602,29 @@ elif page == "Locales":
         "Librerías": ("shop", "books"),
         "Ferreterías": ("shop", "hardware"),
     }
-    kw = st.text_input("Filtro (Google) opcional, ej.: 'supermercado'", key="kw_loc")
+    kw = st.text_input("Filtro (Google) opcional, ej.:  'supermercado'", key="kw_loc")
     t = st.text_input("Tipo (Google) opcional, ej.: 'supermarket'", key="type_loc")
     osm_choice = st.selectbox("Categoría OSM", list(OSM_CATEGORIES.keys()))
     adv_col = st.checkbox("Modo avanzado (key/value OSM)", value=False, key="adv_loc")
-    if adv_col:
-        key_adv = st.text_input("OSM key (ej. shop/amenity)", value="shop", key="key_adv_loc")
+    if adv_col: 
+        key_adv = st.text_input("OSM key (ej.  shop/amenity)", value="shop", key="key_adv_loc")
         val_adv = st.text_input("OSM value (ej. supermarket)", value="supermarket", key="val_adv_loc")
     else:
         key_adv, val_adv = OSM_CATEGORIES[osm_choice]
 
     if st.button("Buscar sugerencias cercanas"):
-        if lat is None or lon is None:
+        if lat is None or lon is None: 
             st.error("Definí lat/lon primero.")
         else:
             places_ext = places_nearby_google(lat, lon, radius_m, keyword=kw or None, place_type=t or None)
             if not places_ext:
                 places_ext = places_nearby_osm(lat, lon, radius_m, key=key_adv, value=val_adv)
 
-            if not places_ext:
+            if not places_ext: 
                 st.info("No se encontraron sugerencias externas.")
             else:
                 for idx, pl in enumerate(places_ext, start=1):
-                    st.write(f"{idx}. **{pl['name']}** — {pl['address']}")
+                    st. write(f"{idx}. **{pl['name']}** — {pl['address']}")
                     if st.button(f"Importar #{idx} a la DB", key=f"import_ext_{idx}"):
                         try:
                             ins = supabase.rpc("insert_store", {
@@ -747,7 +633,7 @@ elif page == "Locales":
                             }).execute()
                             st.success("Local importado a la DB.")
                         except Exception as e:
-                            st.error(f"No se pudo importar: {e}")
+                            st. error(f"No se pudo importar:  {e}")
 
 # =========================
 # PÁGINA ALERTAS
@@ -781,20 +667,20 @@ elif page == "Alertas":
                 }
             ).execute()
             st.success("✅ Alerta creada.")
-        except Exception as e:
+        except Exception as e: 
             st.error(f"No pudimos crear la alerta: {e}")
-            add_log("ERROR", f"Insert alert: {e}")
+            add_log("ERROR", f"Insert alert:  {e}")
 
     st.subheader("Mis notificaciones")
     user_id = get_user_id()
     try:
         notes = supabase.table("notifications").select("id, alert_id, sighting_id, created_at").eq("user_id", user_id).order("created_at", desc=True).execute().data
-        if not notes:
+        if not notes: 
             st.info("Todavía no hay notificaciones.")
         else:
             for n in notes:
                 st.write(f"🔔 Notificación #{n['id']} — avistamiento {n['sighting_id']} — {n['created_at']}")
-    except Exception as e:
+    except Exception as e: 
         st.error(f"Error al cargar notificaciones: {e}")
         add_log("ERROR", f"List notifications: {e}")
 
@@ -807,14 +693,14 @@ elif page == "Alertas":
             last_id = st.session_state.get("last_notif_id", 0)
             q = supabase.table("notifications").select("id, sighting_id, created_at").eq("user_id", user_id)
             if last_id > 0:
-                q = q.gt("id", last_id)
+                q = q. gt("id", last_id)
             rows = q.order("id", desc=False).limit(50).execute().data or []
             for r in rows:
                 nid = r["id"]
                 sid = r["sighting_id"]
                 created = r["created_at"]
                 st.toast(f"🔔 Nueva notificación #{nid} — avistamiento {sid} — {created}", icon="🔔")
-                if nid > st.session_state["last_notif_id"]:
+                if nid > st.session_state["last_notif_id"]: 
                     st.session_state["last_notif_id"] = nid
             if not rows:
                 st.caption("Sin notificaciones nuevas por el momento.")
@@ -824,17 +710,17 @@ elif page == "Alertas":
     if st.session_state.notif_auto:
         notif_fragment()
     else:
-        st.info("⏸️ Auto-actualización pausada. Podés reanudarla cuando quieras.")
+        st.info("⏸️ Auto-actualización pausada.  Podés reanudarla cuando quieras.")
 
     cols_rt = st.columns(3)
-    with cols_rt[0]:
+    with cols_rt[0]: 
         if st.button("Actualizar ahora"):
             st.rerun()
-    with cols_rt[1]:
+    with cols_rt[1]: 
         if st.session_state.notif_auto and st.button("Pausar auto-actualización"):
             st.session_state.notif_auto = False
             st.success("⏸️ Auto-actualización pausada.")
-    with cols_rt[2]:
+    with cols_rt[2]: 
         if (not st.session_state.notif_auto) and st.button("Reanudar auto-actualización"):
             st.session_state.notif_auto = True
             st.success("▶️ Auto-actualización reanudada.")
@@ -883,9 +769,9 @@ elif page == "Admin":
         try:
             supabase.rpc(
                 "update_settings",
-                {"p_tolerance": float(tol_pct) / 100.0, "p_window_days": int(win_days), "p_min_matches": int(min_matches)},
+                {"p_tolerance":  float(tol_pct) / 100.0, "p_window_days": int(win_days), "p_min_matches": int(min_matches)},
             ).execute()
             st.success("✅ Parámetros actualizados.")
-        except Exception as e:
+        except Exception as e: 
             st.error(f"No pudimos actualizar los parámetros: {e}")
             st.info("Verificá que tu user_id esté en la tabla public.admins.")
