@@ -21,7 +21,7 @@ from utils.geolocation_providers import (
 # =========================
 st.set_page_config(page_title="Precios Cercanos", layout="wide")
 
-# Cargar CSS externo (styles.css)
+# Cargar CSS externo (styles.css) - FIX: inyectar el contenido
 try:
     with open("styles.css", "r", encoding="utf-8") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
@@ -79,29 +79,53 @@ def require_auth() -> bool:
 def set_location_from_gps(lat_key: str, lon_key: str):
     """
     Obtiene ubicación del navegador (Cloud-safe) con streamlit-js-eval.
-    Setea lat/lon en session_state y en st.query_params.
+    Lee loc['coords']['latitude/longitude'] o loc['error'].
+    Actualiza session_state y st.query_params.
     """
     try:
-        from streamlit_js_eval import get_geolocation
+        from streamlit_js_eval import get_geolocation, get_user_agent
     except Exception as e:
         st.error(f"No se pudo cargar el módulo de geolocalización: {e}")
+        add_log("ERROR", f"Import get_geolocation: {e}")
         return
 
     st.info("Si tu navegador solicita permiso de ubicación, aceptalo para continuar.")
+    add_log("INFO", "Solicitando geolocalización al navegador...")
     try:
-        loc = get_geolocation()  # retorna {"latitude":..., "longitude":...} si hubo permiso
-        if isinstance(loc, dict) and "latitude" in loc and "longitude" in loc:
-            lat_val = float(loc["latitude"])
-            lon_val = float(loc["longitude"])
-            st.session_state[lat_key] = str(lat_val)
-            st.session_state[lon_key] = str(lon_val)
-            st.query_params.lat = str(lat_val)
-            st.query_params.lon = str(lon_val)
+        ua = get_user_agent()
+        add_log("INFO", f"User-Agent: {ua}")
+        loc = get_geolocation()  # devuelve dict con 'coords' o 'error'
+        add_log("INFO", f"Respuesta get_geolocation: {loc}")
+
+        if not isinstance(loc, dict):
+            st.warning("No se obtuvo ubicación (respuesta no válida).")
+            return
+
+        # Manejo de errores (permiso denegado, etc.)
+        if "error" in loc and isinstance(loc["error"], dict):
+            code = loc["error"].get("code")
+            message = loc["error"].get("message", "Error de geolocalización")
+            if code == 1:  # PERMISSION_DENIED
+                st.warning("Ubicación denegada por el navegador. Permitila en los ajustes del sitio.")
+            else:
+                st.warning(f"No se pudo obtener la ubicación: {message}")
+            return
+
+        coords = loc.get("coords") or {}
+        lat_val = coords.get("latitude")
+        lon_val = coords.get("longitude")
+
+        if lat_val is not None and lon_val is not None:
+            st.session_state[lat_key] = str(float(lat_val))
+            st.session_state[lon_key] = str(float(lon_val))
+            st.query_params.lat = str(float(lat_val))
+            st.query_params.lon = str(float(lon_val))
             st.success("📍 Ubicación actual establecida.")
         else:
             st.warning("No se obtuvo ubicación (permiso denegado o datos no disponibles).")
     except Exception as e:
         st.warning(f"No se pudo acceder al GPS del navegador: {e}")
+        add_log("ERROR", f"get_geolocation exception: {e}")
 
 # =========================
 # Sidebar + navegación
@@ -113,15 +137,37 @@ page = st.sidebar.radio("Secciones", SECCIONES, index=SECCIONES.index(st.session
 if st.session_state.session:
     st.sidebar.success(f"Conectado: {st.session_state.user_email}")
     if st.sidebar.button("Cerrar sesión"):
-        supabase.auth.sign_out()
+        try:
+            supabase.auth.sign_out()
+            add_log("INFO", "Sign out OK")
+        except Exception as e:
+            add_log("ERROR", f"Sign out: {e}")
         st.session_state.session = None
         st.session_state.user_email = None
         st.session_state.nav = "Login"
         st.rerun()
 
-# Modo debug solo si sos admin
+# Modo debug solo si sos admin + panel
 if is_admin():
     st.sidebar.checkbox("🧪 Modo debug", key="debug", value=False)
+    if st.session_state.debug:
+        with st.sidebar.expander("⚙️ Diagnóstico", expanded=True):
+            st.write("User ID:", get_user_id())
+            st.write("Query params:", dict(st.query_params))
+            st.write("Session keys:", list(st.session_state.keys()))
+        if st.sidebar.button("🔧 Probar GPS (debug)"):
+            try:
+                from streamlit_js_eval import get_geolocation, get_user_agent
+                ua = get_user_agent()
+                st.sidebar.write("User-Agent:", ua)
+                loc = get_geolocation()
+                st.sidebar.write("get_geolocation() raw:", loc)
+            except Exception as e:
+                st.sidebar.error(f"Debug GPS error: {e}")
+        if st.session_state.logs:
+            with st.sidebar.expander("Logs recientes", expanded=False):
+                for entry in reversed(st.session_state.logs[-30:]):
+                    st.write(f"[{entry['ts']}] {entry['level']}: {entry['msg']}")
 else:
     st.session_state["debug"] = False
 
@@ -159,8 +205,10 @@ if page == "Login":
                     supabase.auth.sign_in_with_otp({"email": email})
                     st.session_state.otp_last_send = time.time()
                     st.info("✅ Código enviado. Revisá tu email.")
+                    add_log("INFO", f"OTP enviado a {email}")
                 except Exception as e:
                     st.error(f"No pudimos enviar el OTP: {e}")
+                    add_log("ERROR", f"Enviar OTP: {e}")
 
     if st.button("Validar código"):
         try:
@@ -168,10 +216,12 @@ if page == "Login":
             st.session_state.session = session
             st.session_state.user_email = email
             st.success("¡Listo! Sesión iniciada.")
+            add_log("INFO", f"Login OK: {email}")
             st.session_state["nav"] = "Cargar Precio"
             st.rerun()
         except Exception as e:
             st.error(f"No pudimos validar el código: {e}")
+            add_log("ERROR", f"Validar OTP: {e}")
 
 # =========================
 # PÁGINA CARGAR PRECIO
@@ -580,7 +630,7 @@ elif page == "Locales":
         else:
             for r in rows:
                 meters = int(r.get("meters") or 0)
-                st.write(f"• **{r['name']}** — {r.get('address','')}  — {meters} m (id={r['id']})")
+                st.write(f"• **{r['name']}** — {r.get('address','')} — {meters} m (id={r['id']})")
 
     st.divider()
 
@@ -664,6 +714,7 @@ elif page == "Alertas":
             st.success("✅ Alerta creada.")
         except Exception as e:
             st.error(f"No pudimos crear la alerta: {e}")
+            add_log("ERROR", f"Insert alert: {e}")
 
     st.subheader("Mis notificaciones")
     user_id = get_user_id()
@@ -676,6 +727,7 @@ elif page == "Alertas":
                 st.write(f"🔔 Notificación #{n['id']} — avistamiento {n['sighting_id']} — {n['created_at']}")
     except Exception as e:
         st.error(f"Error al cargar notificaciones: {e}")
+        add_log("ERROR", f"List notifications: {e}")
 
     st.divider()
     st.subheader("Notificaciones en tiempo real (polling cada 5s)")
