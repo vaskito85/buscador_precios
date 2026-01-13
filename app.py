@@ -78,54 +78,130 @@ def require_auth() -> bool:
 
 def set_location_from_gps(lat_key: str, lon_key: str):
     """
-    Obtiene ubicación del navegador (Cloud-safe) con streamlit-js-eval.
-    Lee loc['coords']['latitude/longitude'] o loc['error'].
-    Actualiza session_state y st.query_params.
+    Obtiene la ubicación actual en este orden:
+      1) streamlit-geolocation (lat/lon en raíz)
+      2) streamlit-js-eval (loc['coords'].latitude/longitude)
+      3) Componente HTML con navigator.geolocation y recarga (?lat=&lon=)
+    Actualiza session_state y st.query_params. Loguea diagnóstico en modo admin.
     """
+    # 1) Intento con streamlit-geolocation
+    try:
+        from streamlit_geolocation import streamlit_geolocation
+        st.info("Si tu navegador solicita permiso de ubicación, aceptalo para continuar.")
+        loc = streamlit_geolocation()  # {'latitude':..., 'longitude':..., ...} después del click en su botón
+        if isinstance(loc, dict) and loc.get("latitude") is not None and loc.get("longitude") is not None:
+            lat_val = float(loc["latitude"])
+            lon_val = float(loc["longitude"])
+            st.session_state[lat_key] = str(lat_val)
+            st.session_state[lon_key] = str(lon_val)
+            st.query_params.lat = str(lat_val)
+            st.query_params.lon = str(lon_val)
+            st.success("📍 Ubicación actual establecida (streamlit-geolocation).")
+            add_log("INFO", f"GPS via streamlit-geolocation: {lat_val}, {lon_val}")
+            return
+        else:
+            add_log("INFO", f"streamlit-geolocation no devolvió lat/lon (loc={loc})")
+    except Exception as e:
+        add_log("ERROR", f"Import/ejecución streamlit-geolocation falló: {e}")
+
+    # 2) Fallback: streamlit-js-eval
     try:
         from streamlit_js_eval import get_geolocation, get_user_agent
-    except Exception as e:
-        st.error(f"No se pudo cargar el módulo de geolocalización: {e}")
-        add_log("ERROR", f"Import get_geolocation: {e}")
-        return
-
-    st.info("Si tu navegador solicita permiso de ubicación, aceptalo para continuar.")
-    add_log("INFO", "Solicitando geolocalización al navegador...")
-    try:
+        st.info("Si tu navegador solicita permiso de ubicación, aceptalo para continuar.")
         ua = get_user_agent()
-        add_log("INFO", f"User-Agent: {ua}")
-        loc = get_geolocation()  # devuelve dict con 'coords' o 'error'
-        add_log("INFO", f"Respuesta get_geolocation: {loc}")
+        add_log("INFO", f"User-Agent via js_eval: {ua}")
+        loc = get_geolocation()  # dict con 'coords' o 'error'
+        add_log("INFO", f"get_geolocation() via js_eval: {loc}")
 
         if not isinstance(loc, dict):
-            st.warning("No se obtuvo ubicación (respuesta no válida).")
-            return
-
-        # Manejo de errores (permiso denegado, etc.)
-        if "error" in loc and isinstance(loc["error"], dict):
-            code = loc["error"].get("code")
-            message = loc["error"].get("message", "Error de geolocalización")
-            if code == 1:  # PERMISSION_DENIED
-                st.warning("Ubicación denegada por el navegador. Permitila en los ajustes del sitio.")
-            else:
-                st.warning(f"No se pudo obtener la ubicación: {message}")
-            return
-
-        coords = loc.get("coords") or {}
-        lat_val = coords.get("latitude")
-        lon_val = coords.get("longitude")
-
-        if lat_val is not None and lon_val is not None:
-            st.session_state[lat_key] = str(float(lat_val))
-            st.session_state[lon_key] = str(float(lon_val))
-            st.query_params.lat = str(float(lat_val))
-            st.query_params.lon = str(float(lon_val))
-            st.success("📍 Ubicación actual establecida.")
+            st.warning("No se obtuvo ubicación (respuestas JS no válidas). Pasamos a modo HTML.")
         else:
-            st.warning("No se obtuvo ubicación (permiso denegado o datos no disponibles).")
+            if "error" in loc and isinstance(loc["error"], dict):
+                code = loc["error"].get("code")
+                message = loc["error"].get("message", "Error de geolocalización")
+                if code == 1:  # PERMISSION_DENIED
+                    st.warning("Ubicación denegada por el navegador. Permitila en los ajustes del sitio.")
+                    return
+                else:
+                    st.warning(f"No se pudo obtener la ubicación: {message}")
+                    # seguimos al modo HTML
+            else:
+                coords = loc.get("coords") or {}
+                lat_val = coords.get("latitude")
+                lon_val = coords.get("longitude")
+                if lat_val is not None and lon_val is not None:
+                    lat_val = float(lat_val); lon_val = float(lon_val)
+                    st.session_state[lat_key] = str(lat_val)
+                    st.session_state[lon_key] = str(lon_val)
+                    st.query_params.lat = str(lat_val)
+                    st.query_params.lon = str(lon_val)
+                    st.success("📍 Ubicación actual establecida (js-eval).")
+                    return
+                else:
+                    st.warning("No se obtuvo lat/lon desde js-eval. Pasamos a modo HTML.")
     except Exception as e:
-        st.warning(f"No se pudo acceder al GPS del navegador: {e}")
-        add_log("ERROR", f"get_geolocation exception: {e}")
+        add_log("ERROR", f"js-eval falló: {e}")
+
+    # 3) Último recurso: HTML puro con navigator.geolocation y recarga (?lat=&lon=)
+    import streamlit.components.v1 as components
+    geolocation_html = """
+    <div style="margin:8px 0;">
+      <button id="geo-btn" style="
+        background:#4CAF50;color:#fff;border:none;border-radius:8px;
+        padding:10px 16px;font-size:16px;cursor:pointer;">
+        📍 Usar mi ubicación actual (HTML)
+      </button>
+      <span id="geo-status" style="margin-left:10px;color:#888;font-size:14px;"></span>
+    </div>
+    <script>
+    (function(){
+      const statusEl = document.getElementById('geo-status');
+      const btn = document.getElementById('geo-btn');
+      function setStatus(msg, color='#888'){ statusEl.textContent = msg; statusEl.style.color = color; }
+      function onSuccess(pos){
+        const { latitude, longitude } = pos.coords;
+        const lat = Number(latitude.toFixed(6));
+        const lon = Number(longitude.toFixed(6));
+        setStatus(`Lat: ${lat}, Lon: ${lon} (OK)`, '#4CAF50');
+        const topWin = window.top || window.parent || window;
+        const url = new URL(topWin.location.href);
+        url.searchParams.set('lat', String(lat));
+        url.searchParams.set('lon', String(lon));
+        topWin.location.assign(url.toString());
+      }
+      function onError(err){
+        console.warn(err);
+        switch(err.code){
+          case err.PERMISSION_DENIED:
+            setStatus('Permiso denegado. Habilitá acceso a ubicación.', '#d9534f'); break;
+          case err.POSITION_UNAVAILABLE:
+            setStatus('Posición no disponible.', '#d9534f'); break;
+          case err.TIMEOUT:
+            setStatus('Tiempo excedido.', '#d9534f'); break;
+          default:
+            setStatus('Error de geolocalización.', '#d9534f');
+        }
+      }
+      btn.addEventListener('click', function(){
+        setStatus('Obteniendo ubicación…');
+        if (!navigator.geolocation){
+          setStatus('Geolocalización no soportada por el navegador.', '#d9534f');
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(onSuccess, onError, {
+          enableHighAccuracy: true, timeout: 10000, maximumAge: 0
+        });
+      });
+    })();
+    </script>
+    """
+    st.info("Activando componente HTML de fallback para geolocalización…")
+    components.html(geolocation_html, height=100, scrolling=False, unsafe_allow_javascript=True)
+    # Importante: los query params se setean tras la recarga; al volver, los leo:
+    if "lat" in st.query_params and "lon" in st.query_params:
+        st.session_state[lat_key] = str(st.query_params["lat"])
+        st.session_state[lon_key] = str(st.query_params["lon"])
+        st.success("📍 Ubicación actual establecida (HTML).")
 
 # =========================
 # Sidebar + navegación
@@ -159,7 +235,7 @@ if is_admin():
             try:
                 from streamlit_js_eval import get_geolocation, get_user_agent
                 ua = get_user_agent()
-                st.sidebar.write("User-Agent:", ua)
+                st.sidebar.write("User-Agent (js-eval):", ua)
                 loc = get_geolocation()
                 st.sidebar.write("get_geolocation() raw:", loc)
             except Exception as e:
