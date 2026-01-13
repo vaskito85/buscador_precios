@@ -116,4 +116,4 @@ def places_nearby_osm(lat: float, lon: float, radius_m: int, key: str = "shop", 
         return out
     except Exception:
         return []
-``
+
