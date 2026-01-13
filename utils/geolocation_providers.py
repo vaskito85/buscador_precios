@@ -63,7 +63,7 @@ def places_nearby_google(lat: float, lon: float, radius_m: int, keyword=None, pl
         return []
 
 # =========================
-# OpenStreetMap (fallback)
+# OpenStreetMap (Nominatim + Overpass)
 # =========================
 def geocode_address_osm(address: str):
     url = "https://nominatim.openstreetmap.org/search"
@@ -79,7 +79,11 @@ def geocode_address_osm(address: str):
     except Exception:
         return None, None
 
-def places_nearby_osm(lat: float, lon: float, radius_m: int, key="shop", value="supermarket"):
+def places_nearby_osm(lat: float, lon: float, radius_m: int, key: str = "shop", value: str = "supermarket"):
+    """
+    Busca locales cercanos usando Overpass API con filtros dinámicos key/value.
+    Ej: key="shop", value="supermarket"; key="amenity", value="pharmacy"
+    """
     query = f"""
     [out:json];
     node{key}={value};
