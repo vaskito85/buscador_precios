@@ -14,6 +14,10 @@ def _get_google_api_key():
         return os.getenv("GOOGLE_MAPS_API_KEY")
 
 def geocode_address_google(address: str):
+    """
+    Geocodifica una dirección usando Google Geocoding.
+    Retorna (lat, lon) o (None, None) si falla o no hay API Key.
+    """
     api_key = _get_google_api_key()
     if not api_key:
         return None, None
@@ -31,6 +35,10 @@ def geocode_address_google(address: str):
         return None, None
 
 def places_nearby_google(lat: float, lon: float, radius_m: int, keyword=None, place_type=None):
+    """
+    Nearby Search (Google Places). Retorna lista de dicts:
+    [{"name":..., "address":..., "lat":..., "lon":...}, ...]
+    """
     api_key = _get_google_api_key()
     if not api_key:
         return []
@@ -66,6 +74,9 @@ def places_nearby_google(lat: float, lon: float, radius_m: int, keyword=None, pl
 # OpenStreetMap (Nominatim + Overpass)
 # =========================
 def geocode_address_osm(address: str):
+    """
+    Geocodifica con Nominatim (OSM). Retorna (lat, lon) o (None, None) si falla.
+    """
     url = "https://nominatim.openstreetmap.org/search"
     params = {"q": address, "format": "json", "limit": 1}
     headers = {"User-Agent": "PreciosCercanosApp/1.0"}
@@ -81,8 +92,9 @@ def geocode_address_osm(address: str):
 
 def places_nearby_osm(lat: float, lon: float, radius_m: int, key: str = "shop", value: str = "supermarket"):
     """
-    Busca locales cercanos usando Overpass API con filtros dinámicos key/value.
-    Ej: key="shop", value="supermarket"; key="amenity", value="pharmacy"
+    Busca locales cercanos con Overpass API filtrando por key/value (OSM).
+    Ej.: key="shop", value="supermarket" | key="amenity", value="pharmacy"
+    Retorna lista de dicts: [{"name","address","lat","lon"}]
     """
     query = f"""
     [out:json];
@@ -104,3 +116,4 @@ def places_nearby_osm(lat: float, lon: float, radius_m: int, key: str = "shop", 
         return out
     except Exception:
         return []
+``
