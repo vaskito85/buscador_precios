@@ -5,6 +5,7 @@ from typing import List, Dict
 from collections import defaultdict
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from utils.supabase_client import get_supabase
 from utils.helpers import (
@@ -79,32 +80,12 @@ def require_auth() -> bool:
 def set_location_from_gps(lat_key: str, lon_key: str):
     """
     Obtiene la ubicación actual en este orden:
-      1) streamlit-geolocation (lat/lon en raíz)
-      2) streamlit-js-eval (loc['coords'].latitude/longitude)
-      3) Componente HTML con navigator.geolocation y recarga (?lat=&lon=)
+      1) streamlit-js-eval (loc['coords'].latitude/longitude o loc['error'])
+      2) Componente HTML con navigator.geolocation y recarga (?lat=&lon=)
+    *El componente streamlit-geolocation se muestra aparte (persistente) para que el usuario pulse su botón interno.*
     Actualiza session_state y st.query_params. Loguea diagnóstico en modo admin.
     """
-    # 1) Intento con streamlit-geolocation
-    try:
-        from streamlit_geolocation import streamlit_geolocation
-        st.info("Si tu navegador solicita permiso de ubicación, aceptalo para continuar.")
-        loc = streamlit_geolocation()  # {'latitude':..., 'longitude':..., ...} después del click en su botón
-        if isinstance(loc, dict) and loc.get("latitude") is not None and loc.get("longitude") is not None:
-            lat_val = float(loc["latitude"])
-            lon_val = float(loc["longitude"])
-            st.session_state[lat_key] = str(lat_val)
-            st.session_state[lon_key] = str(lon_val)
-            st.query_params.lat = str(lat_val)
-            st.query_params.lon = str(lon_val)
-            st.success("📍 Ubicación actual establecida (streamlit-geolocation).")
-            add_log("INFO", f"GPS via streamlit-geolocation: {lat_val}, {lon_val}")
-            return
-        else:
-            add_log("INFO", f"streamlit-geolocation no devolvió lat/lon (loc={loc})")
-    except Exception as e:
-        add_log("ERROR", f"Import/ejecución streamlit-geolocation falló: {e}")
-
-    # 2) Fallback: streamlit-js-eval
+    # 1) Intento: streamlit-js-eval
     try:
         from streamlit_js_eval import get_geolocation, get_user_agent
         st.info("Si tu navegador solicita permiso de ubicación, aceptalo para continuar.")
@@ -113,9 +94,8 @@ def set_location_from_gps(lat_key: str, lon_key: str):
         loc = get_geolocation()  # dict con 'coords' o 'error'
         add_log("INFO", f"get_geolocation() via js_eval: {loc}")
 
-        if not isinstance(loc, dict):
-            st.warning("No se obtuvo ubicación (respuestas JS no válidas). Pasamos a modo HTML.")
-        else:
+        if isinstance(loc, dict):
+            # Manejo de errores (permiso denegado, etc.)
             if "error" in loc and isinstance(loc["error"], dict):
                 code = loc["error"].get("code")
                 message = loc["error"].get("message", "Error de geolocalización")
@@ -124,7 +104,6 @@ def set_location_from_gps(lat_key: str, lon_key: str):
                     return
                 else:
                     st.warning(f"No se pudo obtener la ubicación: {message}")
-                    # seguimos al modo HTML
             else:
                 coords = loc.get("coords") or {}
                 lat_val = coords.get("latitude")
@@ -137,13 +116,12 @@ def set_location_from_gps(lat_key: str, lon_key: str):
                     st.query_params.lon = str(lon_val)
                     st.success("📍 Ubicación actual establecida (js-eval).")
                     return
-                else:
-                    st.warning("No se obtuvo lat/lon desde js-eval. Pasamos a modo HTML.")
+        else:
+            st.warning("No se obtuvo ubicación (respuestas JS no válidas). Pasamos a modo HTML.")
     except Exception as e:
         add_log("ERROR", f"js-eval falló: {e}")
 
-    # 3) Último recurso: HTML puro con navigator.geolocation y recarga (?lat=&lon=)
-    import streamlit.components.v1 as components
+    # 2) Último recurso: HTML puro con navigator.geolocation y recarga (?lat=&lon=)
     geolocation_html = """
     <div style="margin:8px 0;">
       <button id="geo-btn" style="
@@ -196,8 +174,9 @@ def set_location_from_gps(lat_key: str, lon_key: str):
     </script>
     """
     st.info("Activando componente HTML de fallback para geolocalización…")
-    components.html(geolocation_html, height=100, scrolling=False, unsafe_allow_javascript=True)
-    # Importante: los query params se setean tras la recarga; al volver, los leo:
+    # FIX: components.html NO acepta unsafe_allow_javascript
+    components.html(geolocation_html, height=100, scrolling=False)
+    # Al volver de la recarga, leo los query params
     if "lat" in st.query_params and "lon" in st.query_params:
         st.session_state[lat_key] = str(st.query_params["lat"])
         st.session_state[lon_key] = str(st.query_params["lon"])
@@ -327,9 +306,23 @@ elif page == "Cargar Precio":
         radius_value = col_rad.slider("Radio (m)", 50, 500, 200, step=50)
         radius_m = int(radius_value)
 
-    # Botón GPS (Cloud-safe)
+    # Botón GPS (llama a js-eval y, si falla, muestra fallback HTML)
     if st.button("📍 Usar mi ubicación actual (GPS)"):
         set_location_from_gps("lat_txt", "lon_txt")
+
+    # (Opcional) Componente persistente streamlit-geolocation (botón interno propio)
+    with st.expander("📍 GPS avanzado (componente)", expanded=False):
+        try:
+            from streamlit_geolocation import streamlit_geolocation
+            loc2 = streamlit_geolocation()
+            if isinstance(loc2, dict) and loc2.get("latitude") is not None and loc2.get("longitude") is not None:
+                st.session_state["lat_txt"] = str(float(loc2["latitude"]))
+                st.session_state["lon_txt"] = str(float(loc2["longitude"]))
+                st.query_params.lat = st.session_state["lat_txt"]
+                st.query_params.lon = st.session_state["lon_txt"]
+                st.success("📍 Ubicación establecida (streamlit-geolocation).")
+        except Exception as e:
+            st.caption(f"Componente streamlit-geolocation no disponible: {e}")
 
     # Parseo
     lat = parse_coord(lat_txt)
@@ -596,7 +589,7 @@ elif page == "Lista de Precios":
 
     grouped = defaultdict(list)
     for s in sightings:
-        grouped[(s["product_id"], s["store_id"])].append(s)
+        grouped[(s["product_id"], s["store_id"])] = grouped.get((s["product_id"], s["store_id"]), []) + [s]
 
     entries = []
     for (pid, sid), items in grouped.items():
