@@ -599,7 +599,7 @@ elif page == "🗺️ Explorador de Comercios":
         if lat is None or lon is None: 
             st.error("❌ Por favor, ingresa tu ubicación (latitud y longitud).")
         else:
-            st.info(f"🔍 Buscando {commerce_choice. lower()} en un radio de {radius_m/1000:. 1f} km...")
+            st.info(f"🔍 Buscando {commerce_choice. lower()} en un radio de {radius_m/1000:.1f} km...")
 
             places = places_nearby_google(lat, lon, radius_m, keyword=commerce_choice. split()[-1], place_type=val_type)
             
