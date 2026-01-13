@@ -4,23 +4,33 @@ import os
 import requests
 import streamlit as st
 
+
 # =========================
 # Google Maps
 # =========================
-def _get_google_api_key():
-    try:
-        return st.secrets["GOOGLE_MAPS_API_KEY"]
-    except Exception:
-        return os.getenv("GOOGLE_MAPS_API_KEY")
-
-def geocode_address_google(address: str):
+def _get_google_api_key() -> str | None:
     """
-    Geocodifica una dirección usando Google Geocoding.
+    Obtiene la API Key de Google desde Streamlit secrets o variables de entorno.
+    """
+    try:
+        key = st.secrets["GOOGLE_MAPS_API_KEY"]
+        if key:
+            return str(key)
+    except Exception:
+        pass
+    key = os.getenv("GOOGLE_MAPS_API_KEY")
+    return key if key else None
+
+
+def geocode_address_google(address: str) -> tuple[float | None, float | None]:
+    """
+    Geocodifica una dirección usando Google Geocoding API.
     Retorna (lat, lon) o (None, None) si falla o no hay API Key.
     """
     api_key = _get_google_api_key()
     if not api_key:
         return None, None
+
     url = "https://maps.googleapis.com/maps/api/geocode/json"
     params = {"address": address, "key": api_key, "language": "es"}
     try:
@@ -34,16 +44,24 @@ def geocode_address_google(address: str):
     except Exception:
         return None, None
 
-def places_nearby_google(lat: float, lon: float, radius_m: int, keyword=None, place_type=None):
+
+def places_nearby_google(
+    lat: float,
+    lon: float,
+    radius_m: int,
+    keyword: str | None = None,
+    place_type: str | None = None,
+) -> list[dict]:
     """
-    Nearby Search (Google Places). Retorna lista de dicts:
+    Nearby Search (Google Places). Devuelve lista de locales:
     [{"name":..., "address":..., "lat":..., "lon":...}, ...]
     """
     api_key = _get_google_api_key()
     if not api_key:
         return []
+
     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
-    params = {
+    params: dict[str, str | int] = {
         "location": f"{lat},{lon}",
         "radius": int(radius_m),
         "key": api_key,
@@ -53,12 +71,13 @@ def places_nearby_google(lat: float, lon: float, radius_m: int, keyword=None, pl
         params["keyword"] = keyword
     if place_type:
         params["type"] = place_type
+
     try:
         r = requests.get(url, params=params, timeout=10)
         r.raise_for_status()
         data = r.json()
         results = data.get("results", [])
-        out = []
+        out: list[dict] = []
         for item in results:
             name = item.get("name")
             vicinity = item.get("vicinity") or item.get("formatted_address") or ""
@@ -70,10 +89,11 @@ def places_nearby_google(lat: float, lon: float, radius_m: int, keyword=None, pl
     except Exception:
         return []
 
+
 # =========================
 # OpenStreetMap (Nominatim + Overpass)
 # =========================
-def geocode_address_osm(address: str):
+def geocode_address_osm(address: str) -> tuple[float | None, float | None]:
     """
     Geocodifica con Nominatim (OSM). Retorna (lat, lon) o (None, None) si falla.
     """
@@ -90,7 +110,14 @@ def geocode_address_osm(address: str):
     except Exception:
         return None, None
 
-def places_nearby_osm(lat: float, lon: float, radius_m: int, key: str = "shop", value: str = "supermarket"):
+
+def places_nearby_osm(
+    lat: float,
+    lon: float,
+    radius_m: int,
+    key: str = "shop",
+    value: str = "supermarket",
+) -> list[dict]:
     """
     Busca locales cercanos con Overpass API filtrando por key/value (OSM).
     Ej.: key="shop", value="supermarket" | key="amenity", value="pharmacy"
@@ -108,7 +135,7 @@ def places_nearby_osm(lat: float, lon: float, radius_m: int, key: str = "shop", 
         r.raise_for_status()
         data = r.json()
         elements = data.get("elements", [])
-        out = []
+        out: list[dict] = []
         for el in elements:
             name = el.get("tags", {}).get("name", "Local sin nombre")
             addr = el.get("tags", {}).get("addr:street", "")
@@ -116,4 +143,3 @@ def places_nearby_osm(lat: float, lon: float, radius_m: int, key: str = "shop", 
         return out
     except Exception:
         return []
-
