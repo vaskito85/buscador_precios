@@ -1,10 +1,10 @@
 # utils/geolocation.py
 """
-Módulo centralizado de geolocalización. 
+Módulo centralizado de geolocalización.  
 Maneja la obtención de ubicación desde el navegador sin recargas de página.
 """
 import streamlit as st
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple
 
 def get_user_location() -> Tuple[Optional[float], Optional[float], Optional[str]]:
     """
@@ -29,10 +29,17 @@ def get_user_location() -> Tuple[Optional[float], Optional[float], Optional[str]
     try:
         location = get_geolocation()
         
-        if not isinstance(location, dict):
-            return None, None, "❌ Respuesta inválida del navegador"
+        # DEBUG: Ver qué responde exactamente
+        st.session_state.setdefault("_geo_debug", location)
         
-        # Manejo de errores
+        # Si es None o vacío
+        if location is None:
+            return None, None, "❌ El navegador no respondió (verifica permisos de ubicación)"
+        
+        if not isinstance(location, dict):
+            return None, None, f"❌ Respuesta inválida: {type(location).__name__}"
+        
+        # Caso 1: Error en la respuesta
         if "error" in location:
             error = location. get("error")
             if isinstance(error, dict):
@@ -45,25 +52,42 @@ def get_user_location() -> Tuple[Optional[float], Optional[float], Optional[str]
                     3: "⏱️ Tiempo agotado.  Intenta de nuevo.",
                 }
                 
-                return None, None, error_messages. get(error_code, f"❌ Error {error_code}:  {error_msg}")
+                return None, None, error_messages. get(error_code, f"❌ Error {error_code}: {error_msg}")
+            elif isinstance(error, str):
+                return None, None, f"❌ {error}"
         
-        # Extrae coordenadas si están disponibles
-        coords = location.get("coords")
-        if isinstance(coords, dict):
-            lat = coords.get("latitude")
-            lon = coords.get("longitude")
+        # Caso 2: Coordenadas en location. coords (formato estándar)
+        if "coords" in location:
+            coords = location. get("coords")
+            if isinstance(coords, dict):
+                lat = coords.get("latitude")
+                lon = coords.get("longitude")
+                
+                if lat is not None and lon is not None: 
+                    try:
+                        lat_f = float(lat)
+                        lon_f = float(lon)
+                        return lat_f, lon_f, None
+                    except (ValueError, TypeError) as e:
+                        return None, None, f"❌ Coordenadas inválidas: {e}"
+        
+        # Caso 3: Coordenadas directas (algunos navegadores)
+        if "latitude" in location and "longitude" in location:
+            lat = location. get("latitude")
+            lon = location.get("longitude")
             
             if lat is not None and lon is not None:
                 try:
                     lat_f = float(lat)
                     lon_f = float(lon)
                     return lat_f, lon_f, None
-                except (ValueError, TypeError):
-                    return None, None, "❌ Coordenadas inválidas"
+                except (ValueError, TypeError) as e:
+                    return None, None, f"❌ Coordenadas inválidas: {e}"
         
-        return None, None, "❌ No se obtuvieron coordenadas válidas"
+        # Caso 4: Diccionario vacío o sin datos útiles
+        return None, None, f"❌ No se obtuvieron coordenadas válidas.  Respuesta: {location}"
     
-    except Exception as e:
+    except Exception as e: 
         return None, None, f"❌ Error al obtener ubicación: {str(e)}"
 
 
@@ -79,6 +103,8 @@ def set_location_from_gps(lat_key: str, lon_key: str) -> bool:
     Returns:
         True si la ubicación se obtuvo exitosamente, False en caso contrario
     """
+    st.info("📍 Por favor, autoriza el acceso a tu ubicación cuando el navegador lo solicite.")
+    
     with st.spinner("📍 Obteniendo tu ubicación..."):
         lat, lon, error_msg = get_user_location()
     
@@ -86,35 +112,10 @@ def set_location_from_gps(lat_key: str, lon_key: str) -> bool:
         st.error(error_msg)
         return False
     
-    if lat is not None and lon is not None: 
+    if lat is not None and lon is not None:  
         st.session_state[lat_key] = str(lat)
         st.session_state[lon_key] = str(lon)
         st.success(f"✅ Ubicación obtenida:  {lat:. 4f}, {lon:.4f}")
         return True
     
     return False
-
-
-def get_fallback_input() -> Tuple[Optional[float], Optional[float]]:
-    """
-    Alternativa manual si la geolocalización automática falla.
-    El usuario puede ingresar la ubicación manualmente.
-    
-    Returns:
-        Tuple[lat, lon] o (None, None) si no ingresa datos válidos
-    """
-    st.info("📍 Si el GPS no funciona, puedes ingresar tu ubicación manualmente.")
-    
-    col1, col2 = st. columns(2)
-    with col1:
-        lat_txt = st.text_input("Latitud manual", placeholder="-38.7183")
-    with col2:
-        lon_txt = st.text_input("Longitud manual", placeholder="-62.2663")
-    
-    if lat_txt and lon_txt: 
-        try:
-            return float(lat_txt), float(lon_txt)
-        except ValueError:
-            st.warning("⚠️ Latitud/Longitud inválidas. Usa números decimales.")
-    
-    return None, None
