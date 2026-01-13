@@ -5,9 +5,9 @@ from typing import List, Dict
 from collections import defaultdict
 
 import streamlit as st
-import streamlit.components.v1 as components
+import streamlit. components.v1 as components
 
-from utils.supabase_client import get_supabase
+from utils. supabase_client import get_supabase
 from utils.helpers import (
     normalize_product, prettify_product, parse_coord,
     confidence_label, confidence_class,
@@ -25,7 +25,7 @@ st.set_page_config(page_title="Precios Cercanos", layout="wide")
 
 # Cargar CSS externo (styles.css)
 try:
-    with open("styles.css", "r", encoding="utf-8") as f:
+    with open("styles. css", "r", encoding="utf-8") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 except FileNotFoundError:
     st.warning("styles.css no encontrado. Subilo al repo.")
@@ -54,7 +54,7 @@ st.session_state.setdefault("otp_last_send", 0.0)
 # Helpers de sesión/seguridad
 # =========================
 def add_log(level: str, msg: str):
-    st.session_state.logs.append({"level": level, "msg":  msg, "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
+    st.session_state.logs.append({"level": level, "msg": msg, "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
 
 def get_user_id():
     sess = st.session_state. get("session")
@@ -67,7 +67,7 @@ def is_admin() -> bool:
     try:
         row = supabase.table("admins").select("user_id").eq("user_id", uid).limit(1).execute()
         return bool(row. data)
-    except Exception:
+    except Exception: 
         return False
 
 def require_auth() -> bool:
@@ -86,7 +86,7 @@ st.sidebar.title("🧭 Navegación")
 page = st.sidebar.radio("Secciones", SECCIONES, index=SECCIONES.index(st. session_state["nav"]))
 
 if st.session_state.session:
-    st.sidebar.success(f"Conectado: {st.session_state.user_email}")
+    st.sidebar.success(f"Conectado:  {st.session_state.user_email}")
     if st.sidebar.button("Cerrar sesión"):
         try:
             supabase.auth.sign_out()
@@ -95,7 +95,7 @@ if st.session_state.session:
             add_log("ERROR", f"Sign out:  {e}")
         st.session_state.session = None
         st.session_state.user_email = None
-        st. session_state.nav = "Login"
+        st.session_state.nav = "Login"
         st.rerun()
 
 # Modo debug solo si sos admin
@@ -106,10 +106,29 @@ if is_admin():
             st.write("User ID:", get_user_id())
             st.write("Query params:", dict(st.query_params))
             st.write("Session keys:", list(st.session_state.keys()))
-        if st.session_state.logs:
-            with st.sidebar.expander("Logs recientes", expanded=False):
+            st.write("is_admin():", is_admin())
+            st.write("session_state.debug:", st.session_state.debug)
+        
+        # Botón de prueba GPS
+        if st.sidebar.button("🔧 Probar GPS (debug)", key="test_gps_debug"):
+            st.sidebar.info("Probando get_geolocation()...")
+            try:
+                from streamlit_js_eval import get_geolocation, get_user_agent
+                ua = get_user_agent()
+                st.sidebar.write("✅ User-Agent (js-eval):", ua)
+                loc = get_geolocation()
+                st.sidebar.write("✅ get_geolocation() raw:", loc)
+                st.sidebar.success("Prueba completada")
+            except Exception as e: 
+                st.sidebar.error(f"❌ Debug GPS error: {e}")
+        
+        # Logs
+        if st. session_state. logs:
+            with st.sidebar.expander("📋 Logs recientes", expanded=False):
                 for entry in reversed(st.session_state.logs[-30:]):
-                    st.write(f"[{entry['ts']}] {entry['level']}: {entry['msg']}")
+                    st. write(f"[{entry['ts']}] {entry['level']}: {entry['msg']}")
+        else:
+            st.sidebar.caption("Sin logs aún")
 else:
     st.session_state["debug"] = False
 
@@ -120,7 +139,7 @@ if page != st.session_state["nav"]:
 # PÁGINA LOGIN (OTP)
 # =========================
 if page == "Login":
-    st.title("🔐 Login (OTP por email)")
+    st. title("🔐 Login (OTP por email)")
     if st.session_state.auth_msg:
         st.info(st.session_state.auth_msg)
         st.session_state.auth_msg = None
@@ -157,12 +176,12 @@ if page == "Login":
             session = supabase.auth.verify_otp({"email": email, "token": otp, "type": "email"})
             st.session_state.session = session
             st.session_state.user_email = email
-            st.success("¡Listo! Sesión iniciada.")
+            st.success("¡Listo!  Sesión iniciada.")
             add_log("INFO", f"Login OK: {email}")
             st.session_state["nav"] = "Cargar Precio"
             st.rerun()
         except Exception as e:
-            st.error(f"No pudimos validar el código: {e}")
+            st. error(f"No pudimos validar el código: {e}")
             add_log("ERROR", f"Validar OTP: {e}")
 
 # =========================
@@ -184,7 +203,7 @@ elif page == "Cargar Precio":
     st.subheader("Tu ubicación")
     col_lat, col_lon, col_unit, col_rad = st.columns([1, 1, 0.8, 1.2])
     lat_txt = col_lat.text_input("Latitud", key="lat_txt", placeholder="-38.7183")
-    lon_txt = col_lon. text_input("Longitud", key="lon_txt", placeholder="-62.2663")
+    lon_txt = col_lon.text_input("Longitud", key="lon_txt", placeholder="-62.2663")
     unit = col_unit.selectbox("Unidad de radio", ["Kilómetros", "Metros"], index=0)
     if unit == "Kilómetros":
         radius_value = col_rad.slider("Radio (km)", 1, 15, 5)
@@ -225,7 +244,7 @@ elif page == "Cargar Precio":
     OSM_CATEGORIES = {
         "Supermercados": ("shop", "supermarket"),
         "Almacenes": ("shop", "convenience"),
-        "Farmacias":  ("amenity", "pharmacy"),
+        "Farmacias": ("amenity", "pharmacy"),
         "Verdulerías": ("shop", "greengrocer"),
         "Panaderías": ("shop", "bakery"),
         "Kioscos": ("shop", "kiosk"),
@@ -246,7 +265,7 @@ elif page == "Cargar Precio":
             key_adv, val_adv = OSM_CATEGORIES[osm_choice]
 
         if st.button("Buscar locales cercanos"):
-            if lat is None or lon is None: 
+            if lat is None or lon is None:
                 st.error("Definí latitud/longitud (GPS o manual).")
             else:
                 g_places = places_nearby_google(lat, lon, radius_m, keyword=kw or None, place_type=t or None)
@@ -297,7 +316,7 @@ elif page == "Cargar Precio":
                                 "insert_store",
                                 {"p_name":  new_store_name_a, "p_address": new_store_address_a, "p_lat": float(g_lat), "p_lon": float(g_lon)}
                             ).execute()
-                            store_choice = (ins. data or [{}])[0].get("id")
+                            store_choice = (ins.data or [{}])[0].get("id")
                             st.session_state["store_choice"] = store_choice
                             st.success(f"Local creado y seleccionado (lat={g_lat}, lon={g_lon}).")
                         except Exception as e:
@@ -361,9 +380,9 @@ elif page == "Cargar Precio":
                 st.stop()
 
         user_id = get_user_id()
-        if not user_id: 
+        if not user_id:
             st.error("Tu sesión expiró.  Iniciá sesión nuevamente.")
-            st.session_state.nav = "Login"
+            st.session_state. nav = "Login"
             st.rerun()
 
         product_name = normalize_product(product_name_input)
@@ -390,7 +409,7 @@ elif page == "Cargar Precio":
                 }
             ).execute()
             st.success("✅ Precio registrado.  ¡Gracias por tu aporte!")
-        except Exception as e:
+        except Exception as e: 
             st.error(f"Error al registrar el precio: {e}")
             add_log("ERROR", f"Insert sighting: {e}")
 
@@ -405,9 +424,9 @@ elif page == "Lista de Precios":
     if "lon" in st.query_params:
         st.session_state["lon_txt_lp"] = st.query_params["lon"]
 
-    col_lat, col_lon, col_unit, col_rad = st.columns([1, 1, 0.8, 1.2])
+    col_lat, col_lon, col_unit, col_rad = st. columns([1, 1, 0.8, 1.2])
     lat_txt = col_lat.text_input("Latitud", key="lat_txt_lp", placeholder="-38.7183")
-    lon_txt = col_lon.text_input("Longitud", key="lon_txt_lp", placeholder="-62.2663")
+    lon_txt = col_lon. text_input("Longitud", key="lon_txt_lp", placeholder="-62.2663")
     unit = col_unit.selectbox("Unidad de radio", ["Kilómetros", "Metros"], index=0, key="unit_lp")
     if unit == "Kilómetros":
         radius_value = col_rad.slider("Radio (km)", 1, 15, 5, key="rad_km_lp")
@@ -460,7 +479,7 @@ elif page == "Lista de Precios":
         "id, product_id, store_id, price, created_at, is_validated"
     ).in_("store_id", store_ids).execute().data
 
-    if not sightings: 
+    if not sightings:
         st.info("Aún no hay precios cargados en estos locales.")
         st.stop()
 
@@ -530,13 +549,13 @@ elif page == "Locales":
     if "lat" in st.query_params:
         st.session_state["lat_txt_loc"] = st.query_params["lat"]
     if "lon" in st.query_params:
-        st.session_state["lon_txt_loc"] = st. query_params["lon"]
+        st.session_state["lon_txt_loc"] = st.query_params["lon"]
 
     col_lat, col_lon, col_unit, col_rad = st.columns([1, 1, 0.8, 1.2])
     lat_txt = col_lat.text_input("Latitud", key="lat_txt_loc", placeholder="-38.7183")
-    lon_txt = col_lon.text_input("Longitud", key="lon_txt_loc", placeholder="-62.2663")
+    lon_txt = col_lon. text_input("Longitud", key="lon_txt_loc", placeholder="-62.2663")
     unit = col_unit.selectbox("Unidad de radio", ["Kilómetros", "Metros"], index=0, key="unit_loc")
-    if unit == "Kilómetros": 
+    if unit == "Kilómetros":
         radius_value = col_rad.slider("Radio (km)", 1, 15, 5, key="rad_km_loc")
         radius_m = int(radius_value * 1000)
     else:
@@ -576,7 +595,7 @@ elif page == "Locales":
             rows = [r for r in rows if term in (r. get("name","") or "").lower() or term in (r.get("address","") or "").lower()]
 
         if order == "Nombre":
-            rows.sort(key=lambda r: (r.get("name","") or "").lower())
+            rows. sort(key=lambda r: (r.get("name","") or "").lower())
         else:
             rows.sort(key=lambda r: float(r.get("meters") or 0.0))
 
@@ -604,7 +623,7 @@ elif page == "Locales":
     }
     kw = st.text_input("Filtro (Google) opcional, ej.:  'supermercado'", key="kw_loc")
     t = st.text_input("Tipo (Google) opcional, ej.: 'supermarket'", key="type_loc")
-    osm_choice = st.selectbox("Categoría OSM", list(OSM_CATEGORIES.keys()))
+    osm_choice = st.selectbox("Categoría OSM", list(OSM_CATEGORIES. keys()))
     adv_col = st.checkbox("Modo avanzado (key/value OSM)", value=False, key="adv_loc")
     if adv_col: 
         key_adv = st.text_input("OSM key (ej.  shop/amenity)", value="shop", key="key_adv_loc")
@@ -620,8 +639,8 @@ elif page == "Locales":
             if not places_ext:
                 places_ext = places_nearby_osm(lat, lon, radius_m, key=key_adv, value=val_adv)
 
-            if not places_ext: 
-                st.info("No se encontraron sugerencias externas.")
+            if not places_ext:
+                st. info("No se encontraron sugerencias externas.")
             else:
                 for idx, pl in enumerate(places_ext, start=1):
                     st. write(f"{idx}. **{pl['name']}** — {pl['address']}")
@@ -632,8 +651,8 @@ elif page == "Locales":
                                 "p_lat": float(pl["lat"]), "p_lon": float(pl["lon"])
                             }).execute()
                             st.success("Local importado a la DB.")
-                        except Exception as e:
-                            st. error(f"No se pudo importar:  {e}")
+                        except Exception as e: 
+                            st.error(f"No se pudo importar:  {e}")
 
 # =========================
 # PÁGINA ALERTAS
@@ -680,7 +699,7 @@ elif page == "Alertas":
         else:
             for n in notes:
                 st.write(f"🔔 Notificación #{n['id']} — avistamiento {n['sighting_id']} — {n['created_at']}")
-    except Exception as e: 
+    except Exception as e:
         st.error(f"Error al cargar notificaciones: {e}")
         add_log("ERROR", f"List notifications: {e}")
 
@@ -720,15 +739,25 @@ elif page == "Alertas":
         if st.session_state.notif_auto and st.button("Pausar auto-actualización"):
             st.session_state.notif_auto = False
             st.success("⏸️ Auto-actualización pausada.")
-    with cols_rt[2]: 
+    with cols_rt[2]:
         if (not st.session_state.notif_auto) and st.button("Reanudar auto-actualización"):
             st.session_state.notif_auto = True
             st.success("▶️ Auto-actualización reanudada.")
 
 # =========================
+# DEBUG: Mostrar respuesta de geolocalización en sidebar si existe
+# =========================
+if is_admin() and st.session_state.get("debug"):
+    with st.sidebar. expander("🗺️ Debug Geo", expanded=False):
+        if "_geo_debug" in st.session_state:
+            st.write("Última respuesta GPS:", st.session_state._geo_debug)
+        else:
+            st.caption("Aún no hay respuesta GPS.  Prueba el botón 🔧")
+
+# =========================
 # PÁGINA ADMIN (Settings)
 # =========================
-elif page == "Admin":
+if page == "Admin":
     if not require_auth():
         st.stop()
     if not is_admin():
@@ -772,6 +801,6 @@ elif page == "Admin":
                 {"p_tolerance":  float(tol_pct) / 100.0, "p_window_days": int(win_days), "p_min_matches": int(min_matches)},
             ).execute()
             st.success("✅ Parámetros actualizados.")
-        except Exception as e: 
+        except Exception as e:
             st.error(f"No pudimos actualizar los parámetros: {e}")
             st.info("Verificá que tu user_id esté en la tabla public.admins.")
