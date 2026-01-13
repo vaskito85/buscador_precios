@@ -371,7 +371,7 @@ elif page == "Cargar Precio":
 
     st.subheader("Producto y precio")
     product_name_input = st.text_input("Nombre del producto")
-    price = st.number_input("Precio", min_value=0.0, step=0.01, format="%. 2f")
+    price = st.number_input("Precio", min_value=0.0, step=0.01, format="%.2f")
     currency = st.selectbox("Moneda", ["ARS", "USD", "EUR"])
 
     if st.button("Registrar precio"):
@@ -813,4 +813,5 @@ elif page == "Admin":
             st.success("✅ Parámetros actualizados.")
         except Exception as e: 
             st.error(f"No pudimos actualizar los parámetros: {e}")
+
             st.info("Verificá que tu user_id esté en la tabla public.admins.")
