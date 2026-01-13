@@ -622,7 +622,7 @@ elif page == "🗺️ Explorador de Comercios":
         if lat is None or lon is None: 
             st.error("❌ Por favor, ingresa tu ubicación (latitud y longitud).")
         else:
-            st.info(f"🔍 Buscando {commerce_choice. lower()} en un radio de {radius_m/1000:. 1f} km...")
+            st.info(f"🔍 Buscando {commerce_choice. lower()} en un radio de {radius_m/1000:.1f} km...")
 
             # Primero intenta OSM
             places = places_nearby_osm(lat, lon, radius_m, key=key_type, value=val_type)
@@ -930,4 +930,5 @@ elif page == "Admin":
             st.success("✅ Parámetros actualizados.")
         except Exception as e: 
             st.error(f"No pudimos actualizar los parámetros:  {e}")
+
             st.info("Verificá que tu user_id esté en la tabla public.admins.")
