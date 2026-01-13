@@ -77,19 +77,29 @@ def require_auth() -> bool:
     return True
 
 def set_location_from_gps(lat_key: str, lon_key: str):
-    """Obtiene ubicación con streamlit-geolocation y setea lat/lon + query params."""
+    """
+    Obtiene ubicación del navegador (Cloud-safe) con streamlit-js-eval.
+    Setea lat/lon en session_state y en st.query_params.
+    """
     try:
-        from streamlit_geolocation import geolocation
-        loc = geolocation()
-        if isinstance(loc, dict) and "lat" in loc and "lon" in loc and loc["lat"] and loc["lon"]:
-            st.session_state[lat_key] = str(loc["lat"])
-            st.session_state[lon_key] = str(loc["lon"])
-            # Reflejar en URL (desde servidor)
-            st.query_params.lat = str(loc["lat"])
-            st.query_params.lon = str(loc["lon"])
+        from streamlit_js_eval import get_geolocation
+    except Exception as e:
+        st.error(f"No se pudo cargar el módulo de geolocalización: {e}")
+        return
+
+    st.info("Si tu navegador solicita permiso de ubicación, aceptalo para continuar.")
+    try:
+        loc = get_geolocation()  # retorna {"latitude":..., "longitude":...} si hubo permiso
+        if isinstance(loc, dict) and "latitude" in loc and "longitude" in loc:
+            lat_val = float(loc["latitude"])
+            lon_val = float(loc["longitude"])
+            st.session_state[lat_key] = str(lat_val)
+            st.session_state[lon_key] = str(lon_val)
+            st.query_params.lat = str(lat_val)
+            st.query_params.lon = str(lon_val)
             st.success("📍 Ubicación actual establecida.")
         else:
-            st.warning("No se pudo obtener tu ubicación (permiso denegado o sin datos).")
+            st.warning("No se obtuvo ubicación (permiso denegado o datos no disponibles).")
     except Exception as e:
         st.warning(f"No se pudo acceder al GPS del navegador: {e}")
 
@@ -191,7 +201,7 @@ elif page == "Cargar Precio":
         radius_value = col_rad.slider("Radio (m)", 50, 500, 200, step=50)
         radius_m = int(radius_value)
 
-    # Botón GPS nativo (Cloud-safe)
+    # Botón GPS (Cloud-safe)
     if st.button("📍 Usar mi ubicación actual (GPS)"):
         set_location_from_gps("lat_txt", "lon_txt")
 
@@ -199,7 +209,6 @@ elif page == "Cargar Precio":
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
 
-    # Búsqueda de locales cercanos (DB)
     nearby_options: List[Dict] = []
     store_choice = None
     if lat is not None and lon is not None:
@@ -215,7 +224,7 @@ elif page == "Cargar Precio":
 
     st.subheader("Local")
 
-    # Selector de categorías OSM para sugerencias externas
+    # Selector de categorías OSM + modo avanzado
     OSM_CATEGORIES = {
         "Supermercados": ("shop", "supermarket"),
         "Almacenes": ("shop", "convenience"),
@@ -223,20 +232,29 @@ elif page == "Cargar Precio":
         "Verdulerías": ("shop", "greengrocer"),
         "Panaderías": ("shop", "bakery"),
         "Kioscos": ("shop", "kiosk"),
+        "Carnicerías": ("shop", "butcher"),
+        "Librerías": ("shop", "books"),
+        "Ferreterías": ("shop", "hardware"),
     }
 
     with st.expander("🔍 Sugerencias cercanas (Google/OSM)", expanded=False):
         kw = st.text_input("Filtro (Google) opcional, ej.: 'supermercado'")
         t = st.text_input("Tipo (Google) opcional, ej.: 'supermarket'")
-        osm_choice = st.selectbox("Categoría OSM (para Overpass)", list(OSM_CATEGORIES.keys()))
+        osm_choice = st.selectbox("Categoría OSM", list(OSM_CATEGORIES.keys()))
+        adv_col = st.checkbox("Modo avanzado (key/value OSM)", value=False)
+        if adv_col:
+            key_adv = st.text_input("OSM key (ej. shop/amenity)", value="shop")
+            val_adv = st.text_input("OSM value (ej. supermarket)", value="supermarket")
+        else:
+            key_adv, val_adv = OSM_CATEGORIES[osm_choice]
+
         if st.button("Buscar locales cercanos"):
             if lat is None or lon is None:
                 st.error("Definí latitud/longitud (GPS o manual).")
             else:
                 g_places = places_nearby_google(lat, lon, radius_m, keyword=kw or None, place_type=t or None)
                 if not g_places:
-                    key, value = OSM_CATEGORIES[osm_choice]
-                    g_places = places_nearby_osm(lat, lon, radius_m, key=key, value=value)
+                    g_places = places_nearby_osm(lat, lon, radius_m, key=key_adv, value=val_adv)
                 if not g_places:
                     st.info("No se encontraron sugerencias.")
                 else:
@@ -246,12 +264,7 @@ elif page == "Cargar Precio":
                             try:
                                 ins = supabase.rpc(
                                     "insert_store",
-                                    {
-                                        "p_name": pl["name"],
-                                        "p_address": pl["address"],
-                                        "p_lat": float(pl["lat"]),
-                                        "p_lon": float(pl["lon"]),
-                                    }
+                                    {"p_name": pl["name"], "p_address": pl["address"], "p_lat": float(pl["lat"]), "p_lon": float(pl["lon"])}
                                 ).execute()
                                 store_choice = (ins.data or [{}])[0].get("id")
                                 st.session_state["store_choice"] = store_choice
@@ -406,7 +419,6 @@ elif page == "Lista de Precios":
         radius_value = col_rad.slider("Radio (m)", 50, 500, 200, step=50, key="rad_m_lp")
         radius_m = int(radius_value)
 
-    # Botón GPS
     if st.button("📍 Usar mi ubicación actual (GPS)", key="gps_lp"):
         set_location_from_gps("lat_txt_lp", "lon_txt_lp")
 
@@ -506,7 +518,7 @@ elif page == "Lista de Precios":
             )
 
 # =========================
-# NUEVA PÁGINA: LOCALES
+# NUEVA PÁGINA: LOCALES (Gestión)
 # =========================
 elif page == "Locales":
     if not require_auth():
@@ -538,7 +550,7 @@ elif page == "Locales":
     f_name = st.text_input("Nombre / Dirección contiene…", key="f_name")
     order = st.radio("Ordenar por", ["Distancia", "Nombre"], horizontal=True)
 
-    # Bloque 1: locales (DB) cercanos
+    # Bloque 1: locales (DB) cercanos usando RPC
     st.markdown("### Locales en la base (cercanos)")
     lat = parse_coord(lat_txt)
     lon = parse_coord(lon_txt)
@@ -572,7 +584,7 @@ elif page == "Locales":
 
     st.divider()
 
-    # Bloque 2: Sugerencias externas (Google/OSM)
+    # Bloque 2: Sugerencias externas (Google/OSM) para importar
     st.markdown("### Sugerencias externas (Google/OSM) para importar")
     OSM_CATEGORIES = {
         "Supermercados": ("shop", "supermarket"),
@@ -581,10 +593,19 @@ elif page == "Locales":
         "Verdulerías": ("shop", "greengrocer"),
         "Panaderías": ("shop", "bakery"),
         "Kioscos": ("shop", "kiosk"),
+        "Carnicerías": ("shop", "butcher"),
+        "Librerías": ("shop", "books"),
+        "Ferreterías": ("shop", "hardware"),
     }
     kw = st.text_input("Filtro (Google) opcional, ej.: 'supermercado'", key="kw_loc")
     t = st.text_input("Tipo (Google) opcional, ej.: 'supermarket'", key="type_loc")
     osm_choice = st.selectbox("Categoría OSM", list(OSM_CATEGORIES.keys()))
+    adv_col = st.checkbox("Modo avanzado (key/value OSM)", value=False, key="adv_loc")
+    if adv_col:
+        key_adv = st.text_input("OSM key (ej. shop/amenity)", value="shop", key="key_adv_loc")
+        val_adv = st.text_input("OSM value (ej. supermarket)", value="supermarket", key="val_adv_loc")
+    else:
+        key_adv, val_adv = OSM_CATEGORIES[osm_choice]
 
     if st.button("Buscar sugerencias cercanas"):
         if lat is None or lon is None:
@@ -592,8 +613,7 @@ elif page == "Locales":
         else:
             places_ext = places_nearby_google(lat, lon, radius_m, keyword=kw or None, place_type=t or None)
             if not places_ext:
-                key, value = OSM_CATEGORIES[osm_choice]
-                places_ext = places_nearby_osm(lat, lon, radius_m, key=key, value=value)
+                places_ext = places_nearby_osm(lat, lon, radius_m, key=key_adv, value=val_adv)
 
             if not places_ext:
                 st.info("No se encontraron sugerencias externas.")
